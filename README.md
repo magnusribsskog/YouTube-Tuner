@@ -44,5 +44,5 @@ JavaScript
     minTitleLength: 10,      // Ignores ultra-short titles to prevent false positives
     logLimit: 200            // Keeps the HUD log pipe performant
 
-If you would like to manually configure the tresholds in this version, use install the full version. If you'd rather have the latest stable release, install the loader. Both versions currently rely on a browser script manager. The stable version has only been tested with Violentmonkey
+
     
