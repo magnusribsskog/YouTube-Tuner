@@ -6,12 +6,10 @@
 // @match        https://www.youtube.com/*
 // @run-at       document-start
 // @grant        none
-// @updateURL    https://raw.githubusercontent.com/magnusribsskog/YouTube-Tuner/dev/YouTube-Tuner-3.8.js
-// @downloadURL  https://raw.githubusercontent.com/magnusribsskog/YouTube-Tuner/dev/YouTube-Tuner-3.8.js
 // ==/UserScript==
 
 /*
- * YouTube Tuner v3.7 — Stable
+ * YouTube Tuner v3.8
  * =====================================================================
  *
  * Filters YouTube homepage and search video cards against five heuristics:
