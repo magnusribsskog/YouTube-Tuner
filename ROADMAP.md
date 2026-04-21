@@ -1,4 +1,4 @@
-# YouTube Purge — Development Roadmap
+# YouTube Tuner — Development Roadmap
 
 ## Guiding Philosophy
 The goal is to make the YouTube homepage useful for discovering good content,

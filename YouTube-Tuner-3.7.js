@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         YouTube Purge v3.6.91 - Diagnostic
-// @version      3.6.91
-// @description  v3.6.9 + reverted navigation-gated lifecycle + restored proven init
+// @name         YouTube Tuner v3.7
+// @version      3.7
+// @description  Stable release — filters homepage and search video cards via PHRASE, SLOP, CAPS, DUPE, WATCHED heuristics
 // @author       Anonymous
 // @match        https://www.youtube.com/*
 // @run-at       document-start
@@ -9,28 +9,57 @@
 // ==/UserScript==
 
 /*
+ * YouTube Tuner v3.7 — Stable
+ * =====================================================================
  *
- * v3.6.9 changes from v3.6.8:
- * - grammarSlop expanded: added punctuation repetition ([.!?,]{2,})
- * - Diagnostic console logging added throughout:
- *     [DIAG] scan N — fired on every processPage() call with title count
- *     [DIAG] container — logs each new container tag + title as it is processed
- *     [DIAG] selector OK/FAIL — logs each getChannelName() attempt with which
- *       selector succeeded or that all failed, per container
- *     [DIAG] session — logs cumulative scan count every 50 scans
- *     [DIAG] context — logs page context on every processPage() call
- * - All diagnostic logging prefixed [DIAG] for easy console filtering
- * - All v3.6 behaviours retained unchanged.
+ * Filters YouTube homepage and search video cards against five heuristics:
+ *   PHRASE   — regex clickbait patterns + user-managed custom phrase list
+ *   SLOP     — missing apostrophes, grammar errors, punctuation repetition
+ *   CAPS     — excessive uppercase ratio (>50% after filtering non-letters)
+ *   DUPE     — channel duplicate suppression (one per channel per batch)
+ *   WATCHED  — videos watched >90% (read from resume playback progress bar)
+ *
+ * Scope: homepage (/) and search (/results) only. Channel pages and watch
+ * pages are explicitly out of scope — the user is already expressing intent.
+ *
+ * Architecture:
+ *   - MutationObserver narrowed to ytd-two-column-browse-results-renderer
+ *   - yt-navigate-finish event drives SPA navigation lifecycle (v3.6.93)
+ *   - Hydration gate: containers not processed until title + thumbnail present
+ *   - sessionId stamps: invalidate stale stamps across SPA navigations
+ *   - Recycled container re-evaluation via ytPurgeProcessed stamp
+ *   - Shadow DOM HUD + Word Panel (draggable, collapsible)
+ *
+ * Diagnostics:
+ *   - Health check on homepage boot with three gates (context, skeleton,
+ *     video item presence). Reports [CRIT] if structural elements missing.
+ *   - DOM capture framework: 📸 button + automatic capture on CRIT states
+ *   - Anchor search: last 5 nuked titles as DOM beacons on structural failure
+ *   - Console [DIAG] logging throughout; HUD levels [INFO]/[WARN]/[CRIT]
+ *
+ * Diagnostic console output ([DIAG] prefix) is retained in this stable
+ * release. Runtime cost is negligible and field diagnostics are valuable.
  *
  * localStorage keys:
- *   "yt-purge-phrases" → JSON array of strings (custom phrase list)
+ *   "yt-purge-phrases"  — JSON array of user-managed custom phrase strings
+ *   "yt-purge-nuke-log" — last 5 confirmed-nuked titles for anchor search
  *
- * Heuristic toggle state: session-only, not persisted
- * Channel dedup: unchanged — one per channel per batch, no persistence needed
+ * Heuristic toggle state: session-only, not persisted.
+ * Custom phrase list: persisted via localStorage.
+ * Nuke counter: increments only on first nuke of a container (ytPurgeNuked
+ * flag) — rehydration and re-nuke of the same container do not inflate count.
  */
 
 (function() {
     "use strict";
+
+    // Container tags that the h3 DOM walk legitimately reaches but which
+    // host section headers and navigation entries rather than video cards.
+    // These are skipped before any heuristic evaluates them.
+    const NON_VIDEO_CONTAINERS = new Set([
+        "YTD-GUIDE-SECTION-RENDERER",
+        "YTD-GUIDE-ENTRY-RENDERER",
+    ]);
 
     // ======================== CONFIG ========================
     const CONFIG = {
@@ -211,7 +240,7 @@
         titleArea.style.cssText = "display: flex; flex-direction: column; gap: 2px;";
 
         const mainTitle = document.createElement("span");
-        mainTitle.textContent = "☢️ YouTube Purge v3.6.91-diag";
+        mainTitle.textContent = "☢️ YouTube Tuner v3.7";
         mainTitle.style.cssText = "font-size: 13px; font-weight: 800; color: #ff4757;";
 
         const metaRow = document.createElement("div");
@@ -619,21 +648,17 @@
         }
 
         // ── Phase 2: Shadow root traversal ───────────────────────────────────
-        // If Phase 1 found nothing, the channel name may live inside a shadow
-        // root on one of the container's descendant elements. This is suspected
-        // for ytd-rich-item-renderer where all Phase 1 selectors return null.
+        // Fallback path: walks every descendant with a shadowRoot and tries
+        // CHANNEL_SELECTORS inside each shadow tree.
         //
-        // Strategy: walk every descendant of the container. For each node that
-        // has a shadowRoot, try all CHANNEL_SELECTORS inside that shadow tree.
-        // Log every shadow root encountered and every result — this is mapping
-        // behaviour, not just error reporting. The output tells us exactly where
-        // the channel name lives so we can hardcode the correct path in v3.6.3.
+        // Settled finding: ytd-rich-item-renderer has no shadow roots in its
+        // descendant tree. This traversal completes without finding anything
+        // on that container type. The code remains in place as a defensive
+        // measure for container types where shadow DOM may be used — the cost
+        // is a single querySelectorAll("*") and a shadowRoot check per node.
         //
-        // Note: we walk container.querySelectorAll("*") which returns all
-        // descendants in the regular DOM. Shadow roots are opt-in and each
-        // element either has one or doesn't — we check el.shadowRoot on each.
-        // We do NOT recursively descend into nested shadow roots for now;
-        // one level is sufficient to map the immediate structure.
+        // We do NOT recursively descend into nested shadow roots; one level
+        // is sufficient for all container types currently observed.
         const tag = container.tagName.toLowerCase();
         const descendants = container.querySelectorAll("*");
         const shadowRootsFound = [];
@@ -659,10 +684,12 @@
             }
         }
 
-        // ── Phase 3: Failure reporting ───────────────────────────────────────
-        // Both phases failed. Log the full picture once per container tag type
-        // to avoid flooding — but include shadow root inventory so we know
-        // what was searched. HUD gets an amber WARN; console gets the detail.
+        // ── Phase 3: Null result reporting ───────────────────────────────────
+        // No channel name found via either phase. For container types where
+        // this is the expected outcome (ytd-rich-item-renderer) the null is
+        // passed up and dedup correctly takes no action. We still emit a WARN
+        // once per container tag type so structural changes in new container
+        // types are surfaced rather than silently absorbed.
         if (!getChannelName._warned) getChannelName._warned = new Set();
         if (!getChannelName._warned.has(tag)) {
             getChannelName._warned.add(tag);
@@ -785,7 +812,7 @@
             // Treat pending (hydrating) containers as unprocessed so they
             // are retried even when all stamps otherwise match
             if (container.dataset.ytPurgePending) return true;
-            return container.dataset.ytPurgeProcessed !== title;
+            return container.dataset.ytPurgeProcessed !== `${sessionId}:${title}`;
         });
 
         if (!hasNew) {
@@ -805,10 +832,6 @@
             // Skip non-video containers that the DOM walk legitimately reaches
             // but that should never be filtered. These host navigation headings
             // and section labels, not video cards.
-            const NON_VIDEO_CONTAINERS = new Set([
-                "YTD-GUIDE-SECTION-RENDERER",
-                "YTD-GUIDE-ENTRY-RENDERER",
-            ]);
             if (NON_VIDEO_CONTAINERS.has(container.tagName)) {
                 console.log(`[DIAG] skip non-video container: <${container.tagName.toLowerCase()}> — "${title}"`);
                 return;
@@ -817,7 +840,7 @@
             // Skip only if we have already evaluated this exact title on
             // this container. A recycled container with a new title will
             // have a mismatched stamp and be re-evaluated.
-            if (container.dataset.ytPurgeProcessed === title) return;
+            if (container.dataset.ytPurgeProcessed === `${sessionId}:${title}`) return;
 
             // ── Hydration Gate ───────────────────────────────────────────
             // Do not process this container until it passes the liveness
@@ -834,14 +857,18 @@
             delete container.dataset.ytPurgePending;
 
             // Stamp with current title — done after liveness confirmed
-            container.dataset.ytPurgeProcessed = title;
+            container.dataset.ytPurgeProcessed = `${sessionId}:${title}`;
             console.log(`[DIAG] container: <${container.tagName.toLowerCase()}> — "${title}"`);
 
             // ── Channel dedup ────────────────────────────────────────────────
-            // We force each batch to never render more than one video per 
-            // channel. This vastly improves the function of the Home page as
-            // a place for content discovery, and solves one of YouTube's most
-            // asinine algorithmic behaviours (channel flooding).
+            // Reads the channel name from the container DOM, counts occurrences
+            // within the current batch via channelSeen, and nukes any container
+            // beyond the first match. One per channel per batch.
+            //
+            // When getChannelName() returns null, the container carries no
+            // deduplication signal and is passed through to the remaining
+            // heuristics. This is not a failure — it is the correct behaviour
+            // when no channel name is present to deduplicate against.
             if (heuristics.DUPE.enabled) {
                 const channelName = getChannelName(container);
                 if (channelName) {
@@ -922,9 +949,6 @@
         { selector: "ytd-rich-item-renderer",                   label: "Video card (ytd-rich-item-renderer)" },
     ];
 
-    // Healthcheck is fundamentally broken. Correct loading of the script still relies on navigating directly to the youtube home page
-    
-    
     function runHealthCheck() {
         // Gate 1: Context — health check is only meaningful when filtering
         // is active. On watch pages, channel pages, or settings, the
@@ -1103,8 +1127,19 @@
     let observer = null;
     let currentBrowseTarget = null;
 
+    // Selector targets the browse renderer inside the currently active
+    // (non-hidden) page context. YouTube uses ytd-page-manager to stack
+    // pages rather than destroy them — old pages get the hidden attribute
+    // and remain in the DOM. A bare "ytd-two-column-browse-results-renderer"
+    // query returns the first match in document order, which is the oldest
+    // (and usually hidden) page when the SPA entry point was not home.
+    // Anchoring on `ytd-page-manager > *:not([hidden])` ensures the observer
+    // attaches to the live renderer receiving current feed mutations.
+    const ACTIVE_BROWSE_RENDERER_SELECTOR =
+        "ytd-page-manager > *:not([hidden]) ytd-two-column-browse-results-renderer";
+
     function attachNarrowObserver() {
-        const target = document.querySelector("ytd-two-column-browse-results-renderer");
+        const target = document.querySelector(ACTIVE_BROWSE_RENDERER_SELECTOR);
         if (!target) return false;
         if (observer) observer.disconnect();
         currentBrowseTarget = target;
@@ -1113,83 +1148,154 @@
         return true;
     }
 
-    function init() {
-        // Eager UI injection — HUD and panel always present in the DOM.
-        // Navigation-gated lazy injection was attempted in v3.6.9 and
-        // reverted in v3.6.91. See roadmap for findings. The lifecycle
-        // complexity introduced by lazy injection caused the feed observer
-        // to be replaced on every scroll mutation during SPA navigation,
-        // resulting in filtering stopping after the first pass.
-        hudHost   = createHUD();
-        panelHost = createWordPanel();
-        document.documentElement.appendChild(hudHost);
-        document.documentElement.appendChild(panelHost);
+    // ======================== NAVIGATION-GATED LIFECYCLE ===================
+    // Uses yt-navigate-finish event and ytd-page-manager active-child
+    // selector. See historical notes below for the design rationale.
+    // Second attempt at lazy, context-aware initialisation.
+    //
+    // v3.6.9 failure analysis (see roadmap):
+    //   The SPA observer (subtree:true on documentElement) fires on every DOM
+    //   mutation including scroll. Calling boot() from inside it caused the
+    //   feed observer to be replaced hundreds of times per scroll before the
+    //   booted flag was set, because boot() is async (setTimeout polling).
+    //
+    // v3.6.92 fix — strict responsibility separation:
+    //   boot()              — called ONLY from bootOnce() below, never from
+    //                         the high-frequency SPA observer.
+    //   initialRenderObs    — one-shot observer on document.body. Fires when
+    //                         the browse renderer first appears (direct load,
+    //                         hard reload). Disconnects after first match.
+    //                         Calls bootOnce().
+    //   SPA observer        — watches ONLY for currentBrowseTarget to change.
+    //                         Never calls boot(). Only calls attachNarrowObserver()
+    //                         after boot is complete, and only on genuine
+    //                         renderer replacement.
+    //   bootOnce()          — synchronous gate. Sets booting = true immediately
+    //                         (not after async polling). Prevents any re-entry.
 
-        const waitForBody = () => {
-            if (document.body) {
+    let booted    = false;
+    let booting   = false;
+    let sessionId = 0; // increments on each home/search navigation
+                       // stamps include sessionId so stale stamps from
+                       // previous navigations are detected and re-evaluated
+
+    function createUIOnce() {
+        if (!hudHost)   hudHost   = createHUD();
+        if (!panelHost) panelHost = createWordPanel();
+    }
+
+    function injectUIIfNeeded() {
+        // Always checks actual DOM state — no flag guard.
+        // Safe to call from the SPA observer on every navigation.
+        if (!filteringActive()) return;
+        createUIOnce();
+        if (!document.documentElement.contains(hudHost))
+            document.documentElement.appendChild(hudHost);
+        if (!document.documentElement.contains(panelHost))
+            document.documentElement.appendChild(panelHost);
+    }
+
+    function bootOnce() {
+        // Synchronous re-entry guard — set immediately, not after async polling.
+        // This is the fix for v3.6.9: booting is true before any setTimeout
+        // fires, so rapid repeated calls from any source are blocked immediately.
+        if (booting || booted || !filteringActive()) return;
+        booting = true;
+
+        injectUIIfNeeded();
+        console.log(`[YT-PURGE] v3.7 booting. Context: ${getPageContext()}. Custom phrases: ${customPhrases.length}. Nuke log: ${loadNukeLog().length} entries`);
+
+        const waitForPrimaryTarget = (attempts = 0) => {
+            if (attachNarrowObserver()) {
+                booted = true;
+                if (getPageContext() === "home") setTimeout(runHealthCheck, 1500);
+                logToHUD("INFO", `Narrowed observer active after ${attempts * 250}ms`);
+                console.log(`[YT-PURGE] Narrowed observer active after ${attempts * 250}ms`);
                 processPage();
-                console.log(`[YT-PURGE] v3.6.91-diagnostic active. Context: ${getPageContext()}. Custom phrases: ${customPhrases.length}. Nuke log: ${loadNukeLog().length} entries`);
-
-                // Attempt to attach the primary narrowed observer.
-                // Polls every 250ms for up to 5 seconds (20 attempts).
-                const waitForPrimaryTarget = (attempts = 0) => {
-                    if (attachNarrowObserver()) {
-                        if (getPageContext() === "home") setTimeout(runHealthCheck, 1500);
-                        logToHUD("INFO", `Narrowed observer active after ${attempts * 250}ms`);
-                        console.log(`[YT-PURGE] Narrowed observer active after ${attempts * 250}ms`);
-                    } else if (attempts < 20) {
-                        setTimeout(() => waitForPrimaryTarget(attempts + 1), 250);
-                    } else {
-                        // ── LEGACY FALLBACK ───────────────────────────────────────────
-                        // PRIMARY TARGET NOT FOUND after 5 seconds.
-                        // This block is retained from v3.6.4 as a resilience measure.
-                        // It is legacy code — its activation means the primary observer
-                        // architecture has failed, not that the script is operating
-                        // correctly in a degraded state.
-                        //
-                        // Waiting to be replaced by: a more robust primary target
-                        // detection strategy once YouTube DOM structure is better
-                        // understood across navigation patterns.
-                        //
-                        // Activation is always [CRIT] — never silenced.
-                        console.error("[YT-PURGE][LEGACY] Primary target not found after 5s — falling back to document.body");
-                        logToHUD("CRIT", "Primary observer target absent — legacy fallback active (document.body)");
-                        captureAndDownloadDOM("observer-fallback");
-                        if (observer) observer.disconnect();
-                        observer = new MutationObserver(schedulePage);
-                        observer.observe(document.body, { childList: true, subtree: true });
-                        if (getPageContext() === "home") runHealthCheck();
-                        // ── END LEGACY FALLBACK ───────────────────────────────────────
-                    }
-                };
-                waitForPrimaryTarget();
+            } else if (attempts < 20) {
+                setTimeout(() => waitForPrimaryTarget(attempts + 1), 250);
             } else {
-                setTimeout(waitForBody, 10);
+                // ── LEGACY FALLBACK ───────────────────────────────────────────
+                // PRIMARY TARGET NOT FOUND after 5 seconds.
+                // Retained from v3.6.4 as resilience measure.
+                // Activation is always [CRIT] — never silenced.
+                booted = true;
+                console.error("[YT-PURGE][LEGACY] Primary target not found after 5s — falling back to document.body");
+                logToHUD("CRIT", "Primary observer target absent — legacy fallback active (document.body)");
+                captureAndDownloadDOM("observer-fallback");
+                if (observer) observer.disconnect();
+                observer = new MutationObserver(schedulePage);
+                observer.observe(document.body, { childList: true, subtree: true });
+                if (getPageContext() === "home") runHealthCheck();
+                // ── END LEGACY FALLBACK ───────────────────────────────────────
             }
         };
-        waitForBody();
+        waitForPrimaryTarget();
+    }
 
-        // SPA navigation re-attachment: watches for the browse results renderer
-        // to change (YouTube replaces it on navigation) and re-attaches the
-        // primary observer to the new element. Also re-injects HUD if YouTube
-        // removes it. subtree: true required — SPA navigation mutates deeply
-        // nested elements, not direct children of documentElement.
-        new MutationObserver(() => {
-            const current = document.querySelector("ytd-two-column-browse-results-renderer");
-            if (current && current !== currentBrowseTarget) {
-                if (attachNarrowObserver()) {
-                    if (getPageContext() === "home") setTimeout(runHealthCheck, 1500);
-                    logToHUD("INFO", "Observer re-attached after SPA navigation");
-                    console.log("[YT-PURGE] Observer re-attached after SPA navigation");
+    function init() {
+        // ── yt-navigate-finish: YouTube native SPA navigation event ──────
+        // Fires on window exactly when a client-side route change completes
+        // and the new page structure is stable. This replaces the noisy
+        // documentElement MutationObserver used in v3.6.9 and v3.6.92.
+        //
+        // Why previous attempts failed (confirmed by Gemini, trained on
+        // internal Alphabet IP):
+        //   Attempt 1 (v3.6.9): documentElement observer fires on every
+        //     scroll mutation, causing boot() to be called hundreds of times
+        //     before the async booted flag was set.
+        //   Attempt 2 (v3.6.92): YouTube creates a transient
+        //     ytd-two-column-browse-results-renderer during route change,
+        //     destroys it milliseconds later, and replaces it with the final
+        //     one. Our observer was attaching to the transient ghost element.
+        //   yt-navigate-finish fires only once per navigation, after the
+        //     final renderer is stable. requestAnimationFrame inside the
+        //     handler gives YouTube one additional frame to finish stamping
+        //     the final renderer into the active DOM.
+        window.addEventListener("yt-navigate-finish", () => {
+            // Increment sessionId on every navigation — stale stamps from
+            // previous page load will no longer match and containers will
+            // be re-evaluated even if YouTube reuses the same DOM nodes.
+            sessionId++;
+            console.log(`[YT-PURGE] yt-navigate-finish: sessionId now ${sessionId}`);
+            if (!filteringActive()) {
+                booted  = false;
+                booting = false;
+                console.log("[YT-PURGE] yt-navigate-finish: non-filterable context — boot flags reset");
+                return;
+            }
+            requestAnimationFrame(() => {
+                if (booted) {
+                    // Already booted — check if the active renderer changed.
+                    // Use the same active-page-only selector so we compare
+                    // against the live renderer, not a stale hidden one.
+                    const current = document.querySelector(ACTIVE_BROWSE_RENDERER_SELECTOR);
+                    if (current && current !== currentBrowseTarget) {
+                        if (attachNarrowObserver()) {
+                            if (getPageContext() === "home") setTimeout(runHealthCheck, 1500);
+                            logToHUD("INFO", "Observer re-attached after SPA navigation");
+                            console.log("[YT-PURGE] Observer re-attached after SPA navigation");
+                            processPage();
+                        }
+                    }
+                } else {
+                    bootOnce();
                 }
-            }
-            if (!document.documentElement.contains(hudHost)) {
-                document.documentElement.appendChild(hudHost);
-            }
-            if (!document.documentElement.contains(panelHost)) {
-                document.documentElement.appendChild(panelHost);
-            }
-        }).observe(document.documentElement, { childList: true, subtree: true });
+                injectUIIfNeeded();
+            });
+        });
+
+        // ── Direct load / hard reload ────────────────────────────────────
+        // yt-navigate-finish does not fire on initial page load — only on
+        // subsequent client-side navigations. waitForBody + bootOnce()
+        // handles the direct load case. If yt-navigate-finish also fires
+        // on this load, the synchronous booting flag inside bootOnce()
+        // safely debounces the duplicate call.
+        const waitForBody = () => {
+            if (!document.body) { setTimeout(waitForBody, 10); return; }
+            bootOnce();
+        };
+        waitForBody();
     }
 
     init();

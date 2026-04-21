@@ -1,9 +1,9 @@
-# TouTube Purge
+# YouTube Tuner
 
 A minimalist UserScript to reclaim the YouTube homepage from clickbait heuristics and algorithmic flooding.
 
 ## The Gist
-YouTube Purge acts as a silent filter layer that nukes content based on *behavioral red flags* (CAPS-lock abuse, clickbait grammar, and channel-flooding) before you even have to look at it.
+YouTube Tuner acts as a silent filter layer that nukes content based on *behavioral red flags* (CAPS-lock abuse, clickbait grammar, and channel-flooding) before you even have to look at it.
 
 * **Static Heuristics:** Automatically hides videos using regex-based phrase matching, "slop" grammar detection, and high-ratio uppercase titles.
 * **Channel Deduplication:** Prevents a single channel from hijacking your feed by limiting appearances per scroll-batch.
@@ -12,10 +12,10 @@ YouTube Purge acts as a silent filter layer that nukes content based on *behavio
 
 ---
 
-YouTube Purge v3.1 — stable
+YouTube Tuner v3.1 — stable
 The Gist
 
-YouTube Purge is a minimalist defensive layer for your browser. It doesn't try to "fix" the YouTube UI; it simply nukes low-quality recommendations based on behavioral red flags before they reach your eyes.
+YouTube Tuner is a minimalist defensive layer for your browser. It doesn't try to "fix" the YouTube UI; it simply nukes low-quality recommendations based on behavioral red flags before they reach your eyes.
 
 If the algorithm tries to flood your feed with "SLOP" or "CAPS-LOCK" engagement bait, this script identifies the patterns and suppresses the entire video container in real-time.
 Core Features
