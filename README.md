@@ -3,7 +3,7 @@
 A minimalist UserScript to reclaim the YouTube homepage from clickbait heuristics and algorithmic flooding.
 
 ## The Gist
-YouTube Tuner acts as a silent filter layer that nukes content based on *behavioral red flags* (CAPS-lock abuse, clickbait grammar, and channel-flooding) before you even have to look at it.
+YouTube Tuner acts as a silent filter layer that refuses video suggestions based on textual red flags and severly punishes terrible grammar. (CAPS-lock abuse, clickbait grammar, and channel-flooding) before the videos are rendered in your browser. The filtering logic toggles are accessible through the HUD. The side panel is very powerful, so be careful. If you put too broad terms into the persistant hud, nothing will render. Single term filters are possible, and probably not a good idea.
 
 * **Static Heuristics:** Automatically hides videos using regex-based phrase matching, "slop" grammar detection, and high-ratio uppercase titles.
 * **Channel Deduplication:** Prevents a single channel from hijacking your feed by limiting appearances per scroll-batch.
