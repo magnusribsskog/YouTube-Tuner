@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name         YouTube Purge
+// @name         YouTube Tuner
 // @version      3.1
 // @description  Hide low‑quality YouTube recommendations (phrases + caps). Watched detection removed due to shadow DOM restrictions.
 // @author       Anonymous
