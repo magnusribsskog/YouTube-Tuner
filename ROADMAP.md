@@ -209,11 +209,19 @@ waitForPrimaryTarget polling chain, SPA re-attachment on renderer change only.
 - Update documentation to reflect current architecture
 - Publish as stable (no diagnostic suffix)
 
-### v3.8 — Extension migration (Manifest V3 / Firefox WebExtensions)
+### v3.8 — Diagnostic export (Released)
+- Session diagnostic export via ✱ button in HUD
+- Exports structured markdown per DIAGNOSTIC.md spec
+- Nuke log entries now store {reason, label} objects (backward-compat with v3.7)
+- systemEvents[] captures WARN/CRIT entries for export
+- DIAGNOSTIC.md added to repo as stable format spec
+
+### v3.9 — Extension migration (Manifest V3 / Firefox WebExtensions)
 - Replace localStorage with browser.storage.local
 - Scope content script to www.youtube.com with page type detection
 - HUD as injectable UI (same design, extension-managed)
 - Userscript maintained alongside extension — both supported
+- Extension skeleton already exists locally (YouTube Clickbait Remover codebase)
 
 ### v4.0 — Semantic heuristic pipeline
 - Density throttling: limit videos per semantic cluster per batch
@@ -234,3 +242,4 @@ waitForPrimaryTarget polling chain, SPA re-attachment on renderer change only.
 | v3.6.4–v3.6.9 as individual roadmap items | All completed and absorbed into v3.6.9 release notes above |
 | v3.7 as "Accordion nuke geometry" | Account-level scroll throttling confirmed — out of scope until fresh account |
 | Legacy fallback removal | Retained but logs [CRIT] — acceptable resilience, not deprecated |
+| Userscript auto-loader | Non-trivial and poorly understood. YouTube's CSP, Firefox's content script scheduling, and the document-start timing requirement make dynamic script loading via GM_xmlhttpRequest or fetch() unreliable. localStorage bridge pattern explored but unresolved. Deferred until extension migration makes it irrelevant. |
