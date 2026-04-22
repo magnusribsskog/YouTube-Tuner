@@ -680,7 +680,22 @@
             if (activeContainerTags.has(node.tagName)) return node;
             node = node.parentElement;
         }
-        return element.closest("[class*='video'], [class*='item']") || element.parentElement;
+        // Fallback: find the YTD-* element that is a direct child of a div#contents.
+        // YouTube's grid and list layouts consistently place the video card element
+        // (ytd-rich-item-renderer, ytd-video-renderer, etc.) as a direct child of
+        // div#contents inside the row or section renderer. This correctly resolves
+        // to the outermost card container without knowing its tag name, ensuring
+        // the grid space collapses when the container is hidden.
+        // div#contents (plural) is the grid row's child list; div#content (singular)
+        // is an inner layout div within a single card — these are reliably distinct.
+        node = element.parentElement;
+        while (node && node !== document.body) {
+            if (node.tagName?.startsWith("YTD-") && node.parentElement?.id === "contents") {
+                return node;
+            }
+            node = node.parentElement;
+        }
+        return element.parentElement;
     }
 
     // ======================== CHANNEL NAME EXTRACTION ========================
@@ -1079,16 +1094,17 @@
                 for (const el of allText) {
                     if (el.textContent?.trim() === anchorLabel) {
                         found.push(anchor);
-                        let node = el;
-                        let levels = 0;
-                        while (node && node !== document.body && levels < 10) {
-                            node = node.parentElement;
-                            levels++;
-                            if (node && node.tagName && node.tagName.startsWith("YTD-")) {
-                                const tag = node.tagName;
-                                candidates.set(tag, (candidates.get(tag) || 0) + 1);
+                        // Use the same div#contents heuristic as findVideoContainerFromElement:
+                        // the pivot candidate is the YTD-* element that is a direct child of
+                        // div#contents, not just the first YTD-* ancestor (which would be an
+                        // inner element like ytd-rich-grid-media rather than ytd-rich-item-renderer).
+                        let node = el.parentElement;
+                        while (node && node !== document.body) {
+                            if (node.tagName?.startsWith("YTD-") && node.parentElement?.id === "contents") {
+                                candidates.set(node.tagName, (candidates.get(node.tagName) || 0) + 1);
                                 break;
                             }
+                            node = node.parentElement;
                         }
                         break;
                     }
