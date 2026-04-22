@@ -216,21 +216,34 @@ waitForPrimaryTarget polling chain, SPA re-attachment on renderer change only.
 - systemEvents[] captures WARN/CRIT entries for export
 - DIAGNOSTIC.md added to repo as stable format spec
 
-### v3.9 — Extension migration (Manifest V3 / Firefox WebExtensions)
+### v3.9 — Self-healing selector corrections (Released)
+- CONTAINER_TAGS_BASELINE: hardcoded tag set, never modified at runtime
+- localStorage corrections: discovered tags merged with baseline at startup
+- Anchor search extended: unknown YTD-* pivot with ≥2 beacon confirmations
+  is committed to localStorage and added to active tag set for the session
+- Observer reattaches and processPage() recovers filtering without reload
+- Diagnostic export extended with Selector Corrections section
+- Fallback container detection: div#contents heuristic replaces class-based
+  selector — correctly resolves the outermost card container without knowing
+  its tag name; space collapses correctly in the grid
+- Confirmed stable: self-healing proven in field; boots correctly from
+  channel page → Home SPA navigation entry point
+
+### v4.0 — Extension migration (Manifest V3 / Firefox WebExtensions)
 - Replace localStorage with browser.storage.local
 - Scope content script to www.youtube.com with page type detection
 - HUD as injectable UI (same design, extension-managed)
 - Userscript maintained alongside extension — both supported
 - Extension skeleton already exists locally (YouTube Clickbait Remover codebase)
 
-### v4.0 — Semantic heuristic pipeline
+### v4.1 — Semantic heuristic pipeline
 - Density throttling: limit videos per semantic cluster per batch
   (generalisation of channel dedup, uses existing tokeniser, no LLM needed)
 - LLM cluster identification (optional external service): generates local
   heuristics from novel batches, never blocks filtering
 - ClusterMap with half-life decay: persistent signatures expire over time
   score_new = score_old × 0.5^(t / t_half)
-- Requires extension migration (v3.8) first
+- Requires extension migration (v4.0) first
 
 ---
 
