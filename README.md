@@ -1,173 +1,98 @@
-YouTube Tuner
+# YouTube Tuner
 
 Reduce visual clutter on YouTube’s homepage and search results — without blocking channels or watch pages.
 
-YouTube Tuner is a browser userscript that automatically hides video cards you’d likely skip anyway: clickbait phrases, grammar slop, excessive caps, already-watched videos (over 90%), and duplicate channels in a single scroll batch.
+**YouTube Tuner** is a browser userscript that automatically hides video cards you’d likely skip anyway: clickbait phrases, grammar slop, excessive caps, already-watched videos, and duplicate channels in a single scroll batch.
 
-It works only on the homepage and search results. Channel pages and watch pages are untouched — your intent to watch or explore a creator is never interrupted.
-Why this exists
+It works only on the **homepage** and **search results**. Channel pages and watch pages are untouched — your intent to explore a specific creator is never interrupted.
 
-YouTube’s algorithm is good at surfacing relevant content, but not always good at filtering out annoying content. You’ve probably seen:
+---
 
-    "DONT CLICK THIS 🔥🔥🔥"
+## Why use it?
+YouTube’s algorithm surfaces relevant content but often fails to filter out "annoying" content. You’ve likely seen:
+* **"DONT CLICK THIS 🔥🔥🔥"**
+* **"I UNALIVED MY PC (GONE WRONG)"**
+* The same channel filling your feed with 6 nearly identical videos.
+* Videos you already watched 95% of, still being recommended.
 
-    "I UNALIVED MY PC (GONE WRONG)"
+YouTube Tuner quietly removes these cards. Nothing is deleted or reported; the card simply becomes invisible (`display: none`). You can still find the video by searching for it directly.
 
-    The same channel filling your feed with 6 nearly identical videos
+---
 
-    Videos you already watched 95% of, still being recommended
+## What it filters (and why)
 
-YouTube Tuner quietly removes those cards from view. Nothing is deleted or reported — the card simply becomes invisible to you. You can still find the video by searching for it directly.
-What it filters (and why)
-Filter	What it catches	Example
-Phrase	Clickbait regex + your own custom phrases	"OMG", "GONE WRONG", "BREAKS REALITY"
-Slop	Missing apostrophes, repeated punctuation	"dont do this!!", "WOW???"
-Caps	>50% capital letters after removing non‑letters	"THIS IS INSANE" (short words like "OK" are ignored)
-Watched	Videos you’ve watched >90% of (red progress bar)	Any video at 95% watched
-Duplicate	Only 1 video per channel per scroll batch	Second, third video from same channel hidden
+| Filter | What it catches | Example |
+| :--- | :--- | :--- |
+| **Phrase** | Clickbait regex + your own custom phrases | "OMG", "GONE WRONG", "BREAKS REALITY" |
+| **Slop** | Missing apostrophes, repeated punctuation | "dont do this!!", "WOW???" |
+| **Caps** | >50% caps (short words like "OK" are ignored) | "THIS IS INSANE" |
+| **Watched** | Videos you’ve watched >90% (red progress bar) | Any video at 95% watched |
+| **Duplicate** | Only 1 video per channel per scroll batch | 2nd or 3rd video from the same channel |
 
-All filters are on by default but can be toggled off individually (session only) from the on‑screen panel.
-How to install (non‑technical)
+*All filters are on by default but can be toggled off individually for the current session via the on‑screen panel.*
 
-    Install a userscript manager extension in Firefox
+---
 
-        Tampermonkey 
+## Installation (Non-Technical)
 
-        Violentmonkey 
+1.  **Install a userscript manager** extension:
+    * [Tampermonkey](https://www.tampermonkey.net/)
+    * [Violentmonkey](https://violentmonkey.github.io/)
+2.  **Create a new script** in your manager dashboard.
+3.  **Copy and paste** the entire script content into the editor.
+4.  **Save** (`Ctrl+S` / `Cmd+S`).
+5.  **Reload YouTube.**
 
-    Create a new script.
+> **Note:** Firefox is fully supported. Chromium support is on the roadmap but not yet implemented.
 
-    Copy the entire script content into the editor.
+---
 
-    Save (Ctrl+S / Cmd+S).
+## How to use
 
-    Reload YouTube.
-    (Chromium support is on the roadmap, but not implemented)
+### The HUD (Heads‑Up Display)
+Located in the top-right corner of YouTube:
+* **NUKED counter:** Total videos hidden since page load.
+* **Log area:** Scrollable list of hidden videos with reason codes.
+* **📸 button:** Downloads a snapshot of the current page (for debugging).
+* **▲/▼ button:** Collapses or expands the log.
 
-You’ll see a dark panel in the top‑right corner of YouTube with:
+### The Filter Panel (Click ⚡)
+* **Toggle filters:** Turn specific logic on/off (resets on page reload).
+* **Custom phrases:** Add or remove words like "sponsored" or "reaction." These are **persistent** and saved in your browser.
 
-    A counter of how many videos have been hidden this session
+---
 
-    A log of why each video was hidden
+## For Developers & Technical Users
 
-    An ⚡ button to open the filter controls panel
+### Architecture Overview
+YouTube Tuner uses a narrow `MutationObserver` attached to the active browse results renderer rather than the entire document. Navigation is driven by YouTube’s native `yt-navigate-finish` event to avoid "ghost-renderer" issues.
 
-How to use
-The HUD (Heads‑Up Display)
+### Key Components
+| Component | Purpose |
+| :--- | :--- |
+| `heuristics` | Object containing filter toggles and session counters. |
+| `customPhrases` | Array persisted in `localStorage` (`yt-purge-phrases`). |
+| `attachNarrowObserver()` | Targets `ytd-two-column-browse-results-renderer`. |
+| `runHealthCheck()` | Validates DOM structure; triggers capture on failure. |
+| `runAnchorSearch()` | Uses the last 5 nuked titles to identify new container tags after a layout change. |
 
-    NUKED counter – total videos hidden since page load
+### Hydration Gate
+To prevent false negatives, containers are only processed when:
+1.  Title text length is >= 3 characters.
+2.  A thumbnail image is present.
 
-    Log area – scrollable list of hidden videos, with reason codes
+Processed containers are stamped with `dataset.ytPurgeProcessed`. If YouTube recycles the DOM node, the stamp is updated and the video is re-evaluated.
 
-    📸 button – downloads a snapshot of the current page (for debugging)
+### Heuristic Logic
+* **Caps:** `letters.replace(/[^A-Z]/g, "").length / letters.length >= 0.5` (only for titles > 10 chars).
+* **Watched:** Parses `#progress` element’s `style.width` integer.
+* **Duplicate:** Map of `channelName` → `count` per `processPage()` batch.
 
-    ▲/▼ button – collapses/expands the log
+---
 
-The filter panel (click ⚡)
+## Known Limitations & License
+* **Shadow DOM:** Closed shadow roots are not serialized in DOM captures.
+* **Layout Changes:** Channel name extraction may fail if YouTube updates its CSS selectors; the script falls back gracefully.
+* **License:** Unlicense / Public Domain. Use at your own risk.
 
-    Toggle filters on/off (session only – resets on page reload)
-
-    Add / remove custom phrases (persistent – saved in your browser)
-
-        Example: add "sponsored" or "reaction" to hide any title containing that word
-
-    Each filter shows how many videos it has caught
-
-What happens to hidden videos
-
-They are not deleted, only hidden via display: none. YouTube still loads them, but you don’t see them. Refreshing the page or scrolling loads new videos, and the filter runs again.
-For developers / technical users
-Architecture overview
-
-YouTube Tuner uses a narrow MutationObserver attached to the active browse results renderer, not the entire document. Navigation lifecycle is driven by YouTube’s native yt-navigate-finish event, avoiding the ghost‑renderer and scroll‑storm issues of earlier versions.
-
-Key files / components inside the script:
-Component	Purpose
-heuristics object	Filter toggles + counters (session only)
-customPhrases array	Persisted in localStorage under yt-purge-phrases
-nukeLog array	Last 5 nuked titles stored in yt-purge-nuke-log (anchor search)
-HUD / Word Panel	Shadow DOM UI elements (draggable, collapsible)
-attachNarrowObserver()	Primary mutation observer target: ytd-two-column-browse-results-renderer inside the active page
-runHealthCheck()	Validates structural elements (ytd-rich-grid-renderer, etc.) — triggers DOM capture on failure
-captureAndDownloadDOM()	Downloads documentElement.outerHTML for offline diagnosis
-runAnchorSearch()	On structural failure, searches DOM for last 5 nuked titles to identify new container tags
-Scope rules
-
-    Active filtering: only when window.location.pathname is / (homepage) or starts with /results (search)
-
-    Never filters: watch pages (/watch), channel pages (/@username, /c/, /channel/), or settings pages
-
-Hydration gate
-
-Containers are not processed until both:
-
-    Title text length ≥ 3 characters
-
-    A thumbnail image (img[src*='ytimg.com'] or yt-img-shadow) is present
-
-This prevents false negatives from partially hydrated cards. Processed containers get a stamp:
-dataset.ytPurgeProcessed = "${sessionId}:${title}"
-
-If YouTube recycles the same DOM node for a new video, the stamp changes and the container is re‑evaluated.
-Deduplication logic
-
-getChannelName() attempts channel extraction in two phases:
-
-    Standard selectors (ytd-channel-name #text, etc.) in the regular DOM
-
-    Shadow root traversal (one level deep) — for container types that might shadow channel names
-
-If no channel name is found, the DUPE filter does nothing (pass‑through, not a failure).
-Heuristic details
-Heuristic	Implementation
-Slop	Regex: \b(dont|doesnt|...)\b|([.!?,]){2,}
-Phrase	CONFIG.clickbait regex + customPhrases array (case‑insensitive)
-Caps	letters.replace(/[^A-Z]/g, "").length / letters.length >= 0.5 (title length > 10)
-Watched	Parses #progress element’s style.width integer — nuke if > 90
-Duplicate	Map of channelName → count per processPage() batch — nuke if count > 1
-UI persistence
-
-    Filter toggles: session only (reset on page load)
-
-    Custom phrases: persisted via localStorage (yt-purge-phrases)
-
-    Nuke log: last 5 titles stored in localStorage (yt-purge-nuke-log) for anchor search
-
-Diagnostic features
-
-    Console output prefixed with [DIAG] (always enabled in this stable release)
-
-    HUD logs [INFO], [WARN], [CRIT] messages
-
-    Health check runs on homepage boot — if structural elements are missing, a DOM capture is automatically downloaded and anchor search is attempted
-
-    Manual 📸 button downloads a snapshot at any time
-
-Build / packaging
-
-The script is self‑contained (no external dependencies, @grant none). To modify:
-
-    Edit the CONFIG object for thresholds or regex patterns.
-
-    Add new heuristics inside the processPage() loop.
-
-    Run through Tampermonkey’s built‑in editor — no build step.
-
-Known limitations
-
-    Shadow DOM content is not serialised in DOM captures (closed shadow roots). Captures are still useful for container hierarchy and class names.
-
-    Channel name extraction may fail on future YouTube layout changes — the script logs [DIAG] getChannelName FAILED and falls back gracefully.
-
-    Health check may fire false [CRIT] during slow page loads (skeleton screens) — deferred by 1.5 seconds on homepage.
-
-License
-
-Unlicense / public domain (implied by @author Anonymous and lack of explicit license). Use at your own risk.
-Credits & version
-
-Current version: 3.7 (stable)
-Former name: YouTube Purge
-Author: Anonymous
-
-Based on field diagnostics from v3.6.x series. Retains full diagnostic logging, DOM capture framework, and anchor search for structural failure analysis.
+**Version:** 3.8 (Stable) | **Authors:** Magnus Ribsskog, Claude
