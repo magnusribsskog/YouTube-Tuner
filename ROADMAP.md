@@ -123,11 +123,7 @@ Key confirmed findings and implementations:
   not fully understood but the observable result is correct. No issues identified.
 - Health check scoped to homepage context only — fires once per page load
   when context is "home", skipped silently on watch/channel pages.
-  Applied in v3.6.9. Prevents false [CRIT] entries during SPA navigation.
-
----
-
-## Active
+  Prevents false [CRIT] entries during SPA navigation.
 
 ### v3.6.91 — Stable (lifecycle revert)
 Navigation-gated lazy lifecycle attempted in v3.6.9 reverted. All genuine
@@ -143,7 +139,7 @@ improvements from v3.6.9 retained.
 - Nuke counter: ytPurgeNuked flag prevents inflation from rehydration
 - All v3.6.8 and earlier confirmed features
 
-**Reverted: Navigation-Gated Lifecycle (do not attempt again without resolution)**
+**Reverted: Navigation-Gated Lifecycle — do not attempt again without resolution**
 Attempted to defer all script activity until context confirmed as home/search.
 The approach failed in two distinct ways that compound each other:
 
@@ -164,26 +160,37 @@ The approach failed in two distinct ways that compound each other:
    A separate initialRenderObserver was needed, adding a third observer and
    further complicating lifecycle reasoning.
 
-**Root cause summary:** The navigation-gated model requires synchronous,
-single-fire wakeup. YouTube's SPA mutation model is fundamentally incompatible
-with this — it produces continuous high-frequency mutations that cannot be
-reliably distinguished from navigation events at the documentElement level.
+**Root cause:** The navigation-gated model requires synchronous, single-fire
+wakeup. YouTube's SPA mutation model is fundamentally incompatible with this.
 
-**What would be needed to revisit this:**
-- A YouTube-native navigation event or hook (none currently available)
-- yt-navigate-finish or similar custom event if YouTube exposes one
-- Extension build with chrome.webNavigation API (v3.8+) which provides
-  genuine single-fire navigation events
+**What would be needed to revisit:**
+- yt-navigate-finish (YouTube's native SPA navigation event) — adopted in v3.8+
+- Extension build with chrome.webNavigation API — provides genuine single-fire
+  navigation events, available in v4.0
 
 **Restored architecture:** Proven v3.6.7 init — eager HUD injection, single
 waitForPrimaryTarget polling chain, SPA re-attachment on renderer change only.
 
-### v3.6.10 — Diagnostic cleanup
-- Health check scope fix already applied in v3.6.9
-- Remove verbose [DIAG] logs — retain only:
-    hydration deltas, [CRIT]/[WARN] events, anchor search reports,
-    session milestone (every 50 scans)
-- Move NON_VIDEO_CONTAINERS Set outside forEach loop (performance micro-opt)
+### v3.8 — Stable
+- Session diagnostic export via ✱ button in HUD
+- Exports structured markdown per DIAGNOSTIC.md spec
+- Nuke log entries now store {reason, label} objects (backward-compat with v3.7)
+- systemEvents[] captures WARN/CRIT entries for export
+- DIAGNOSTIC.md added to repo as stable format spec
+- yt-navigate-finish replaces documentElement MutationObserver for SPA lifecycle
+
+### v3.9 — Stable
+- CONTAINER_TAGS_BASELINE: hardcoded tag set, never modified at runtime
+- localStorage corrections: discovered tags merged with baseline at startup
+- Anchor search extended: unknown YTD-* pivot with ≥2 beacon confirmations
+  is committed to localStorage and added to active tag set for the session
+- Observer reattaches and processPage() recovers filtering without reload
+- Diagnostic export extended with Selector Corrections section
+- Fallback container detection: div#contents heuristic replaces class-based
+  selector — correctly resolves the outermost card container without knowing
+  its tag name; grid space collapses correctly
+- Confirmed stable: self-healing proven in field; boots correctly from
+  channel page → Home SPA navigation entry point
 
 ---
 
@@ -195,39 +202,12 @@ waitForPrimaryTarget polling chain, SPA re-attachment on renderer change only.
 - Change observer callback to iterate addedNodes that are video containers
 - Schedule only newly added containers for processing via RAF
 - CPU cost scales with newly added cards, not total feed size
-- Compatible with both "Load more" pagination and infinite scroll if restored
 
 ### v3.6.12 — Hydration gate tuning
 - Analyse hydration delta logs from real usage
 - Implement adaptive retry: if container stays pending >2 seconds,
   force-evaluate with whatever title exists (prevents permanent hang)
 - Consider 50ms debounce when multiple containers added in rapid succession
-
-### v3.7 — Stable release candidate
-- Remove all remaining [DIAG] console logs (keep [CRIT] and anchor search)
-- Verify all heuristics with insertion-only observer
-- Update documentation to reflect current architecture
-- Publish as stable (no diagnostic suffix)
-
-### v3.8 — Diagnostic export (Released)
-- Session diagnostic export via ✱ button in HUD
-- Exports structured markdown per DIAGNOSTIC.md spec
-- Nuke log entries now store {reason, label} objects (backward-compat with v3.7)
-- systemEvents[] captures WARN/CRIT entries for export
-- DIAGNOSTIC.md added to repo as stable format spec
-
-### v3.9 — Self-healing selector corrections (Released)
-- CONTAINER_TAGS_BASELINE: hardcoded tag set, never modified at runtime
-- localStorage corrections: discovered tags merged with baseline at startup
-- Anchor search extended: unknown YTD-* pivot with ≥2 beacon confirmations
-  is committed to localStorage and added to active tag set for the session
-- Observer reattaches and processPage() recovers filtering without reload
-- Diagnostic export extended with Selector Corrections section
-- Fallback container detection: div#contents heuristic replaces class-based
-  selector — correctly resolves the outermost card container without knowing
-  its tag name; space collapses correctly in the grid
-- Confirmed stable: self-healing proven in field; boots correctly from
-  channel page → Home SPA navigation entry point
 
 ### v4.0 — Extension migration (Manifest V3 / Firefox WebExtensions)
 - Replace localStorage with browser.storage.local
@@ -253,6 +233,8 @@ waitForPrimaryTarget polling chain, SPA re-attachment on renderer change only.
 |---|---|
 | IntersectionObserver (was v3.6.8) | Not testable on account with pagination; not needed after targeted insertion observer |
 | v3.6.4–v3.6.9 as individual roadmap items | All completed and absorbed into v3.6.9 release notes above |
+| v3.6.10 — Diagnostic cleanup | Never shipped as a distinct version; improvements absorbed into v3.8 and v3.9 |
+| v3.7 — Stable release candidate | Superseded by jumping directly to v3.8; its goals (log cleanup, stable label) are met by v3.9 |
 | v3.7 as "Accordion nuke geometry" | Account-level scroll throttling confirmed — out of scope until fresh account |
 | Legacy fallback removal | Retained but logs [CRIT] — acceptable resilience, not deprecated |
 | Userscript auto-loader | Non-trivial and poorly understood. YouTube's CSP, Firefox's content script scheduling, and the document-start timing requirement make dynamic script loading via GM_xmlhttpRequest or fetch() unreliable. localStorage bridge pattern explored but unresolved. Deferred until extension migration makes it irrelevant. |
