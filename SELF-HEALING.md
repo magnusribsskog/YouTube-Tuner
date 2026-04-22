@@ -45,8 +45,9 @@ localStorage entry format:
 ```
 
 On startup, corrections are loaded and merged with the hardcoded baseline.
-A correction that has not been confirmed in 7 days is treated as stale and
-dropped from the active set (but retained in the table below for reference).
+A correction is valid until the health check fires again — at which point the
+anchor search re-runs and either reconfirms it or replaces it. There is no
+time-based expiry. YouTube renames tags in deployments, not gradually.
 
 ### Confidence threshold
 
@@ -80,9 +81,8 @@ correct them within one page load.
 
 | Real tag | Broken tag used in test |
 |----------|------------------------|
-| — | — |
-
-This table is populated as test cases are written.
+| YTD-RICH-ITEM-RENDERER | YTD-RICH-ITEM-RENDERER-BROKEN |
+| YTD-VIDEO-RENDERER | YTD-VIDEO-RENDERER-BROKEN |
 
 ---
 
@@ -90,7 +90,7 @@ This table is populated as test cases are written.
 
 | Scenario | Behaviour |
 |----------|-----------|
-| Bad pivot candidate persisted | Stale tag expires after 7 days; hardcoded baseline continues to function |
+| Bad pivot candidate persisted | Health check re-runs on next page load and re-evaluates via anchor search; hardcoded baseline continues to function |
 | Anchor search finds no beacons | No correction attempted; CRIT remains in HUD |
 | YouTube reverts a rename | Old tag reappears; hardcoded baseline already covers it |
 | localStorage cleared | Cold start; hardcoded baseline takes over immediately |
