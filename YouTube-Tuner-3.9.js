@@ -1063,63 +1063,86 @@
     }
 
     // ======================== ANCHOR SEARCH FRAMEWORK ========================
-    // On structural failure ([CRIT]), attempts to locate confirmed-rendered
-    // titles in the current DOM using the nuke log as search beacons.
-    // Purpose: identify new container tag names after a YouTube DOM rename.
+    // On structural failure ([CRIT]), identifies container tag names by finding
+    // known titles in the DOM and walking up to the YTD-* child of div#contents.
     //
-    // Self-healing extension: unknown tags found with ≥2 beacon confirmations
-    // are committed to localStorage and added to activeContainerTags. The
-    // observer is reattached and processPage() is called to recover filtering.
+    // Two beacon sources:
+    //   Normal path  — nuke log: confirmed-rendered titles from prior nukes.
+    //   Cold start   — synthetic: h3s currently visible in the DOM that resolve
+    //                  to a YTD-* child of div#contents via the same heuristic
+    //                  used by findVideoContainerFromElement. No prior nuke
+    //                  history required; the structural filter provides the same
+    //                  quality guarantee as nuke log confirmation.
     //
-    // Validation before committing:
-    //   - Tag name starts with "YTD-" (YouTube custom element convention)
-    //   - Tag is not already in CONTAINER_TAGS_BASELINE (no double-entry)
-    //   - At least 2 independent beacons confirmed the tag as pivot
+    // Validation before committing a correction:
+    //   - Tag name starts with "YTD-"
+    //   - Not already in CONTAINER_TAGS_BASELINE
+    //   - ≥2 independent beacons confirmed the tag as pivot
 
     function runAnchorSearch() {
         const anchors = loadNukeLog();
-        if (!anchors.length) {
-            console.log("[YT-PURGE] Anchor search: no nuke log entries available");
-            logToHUD("WARN", "Anchor search inconclusive — no nuke log available");
-            return;
-        }
+        const isColdStart = anchors.length === 0;
 
         setTimeout(() => {
-            const allText = document.querySelectorAll("h3, yt-formatted-string, span");
-            const found = [];
-            const candidates = new Map(); // tag → count
+            const candidates = new Map(); // tag → beacon count
+            let beaconCount  = 0;
 
-            anchors.forEach(anchor => {
-                const anchorLabel = typeof anchor === "string" ? anchor : anchor.label;
-                for (const el of allText) {
-                    if (el.textContent?.trim() === anchorLabel) {
-                        found.push(anchor);
-                        // Use the same div#contents heuristic as findVideoContainerFromElement:
-                        // the pivot candidate is the YTD-* element that is a direct child of
-                        // div#contents, not just the first YTD-* ancestor (which would be an
-                        // inner element like ytd-rich-grid-media rather than ytd-rich-item-renderer).
-                        let node = el.parentElement;
-                        while (node && node !== document.body) {
-                            if (node.tagName?.startsWith("YTD-") && node.parentElement?.id === "contents") {
-                                candidates.set(node.tagName, (candidates.get(node.tagName) || 0) + 1);
-                                break;
-                            }
-                            node = node.parentElement;
+            if (isColdStart) {
+                // Synthesize beacons from h3s currently visible in the DOM.
+                // Only h3s whose parent chain contains a YTD-* child of div#contents
+                // are counted — this is the same structural filter used by
+                // findVideoContainerFromElement, so it only matches real video cards.
+                document.querySelectorAll("h3").forEach(h3 => {
+                    const title = h3.textContent?.trim();
+                    if (!title || title.length < 3) return;
+                    let node = h3.parentElement;
+                    while (node && node !== document.body) {
+                        if (node.tagName?.startsWith("YTD-") && node.parentElement?.id === "contents") {
+                            candidates.set(node.tagName, (candidates.get(node.tagName) || 0) + 1);
+                            beaconCount++;
+                            break;
                         }
-                        break;
+                        node = node.parentElement;
                     }
+                });
+                console.log(`[YT-PURGE] Anchor search (cold start): ${beaconCount} synthetic beacons`);
+                if (beaconCount < 2) {
+                    logToHUD("WARN", `Cold start anchor search inconclusive — only ${beaconCount} synthetic beacon(s) found`);
+                    return;
                 }
-            });
+            } else {
+                // Normal path: search DOM for confirmed-nuked titles as beacons.
+                const allText = document.querySelectorAll("h3, yt-formatted-string, span");
+                const found   = [];
 
-            console.log(`[YT-PURGE] Anchor search: ${found.length}/${anchors.length} anchors found`);
+                anchors.forEach(anchor => {
+                    const anchorLabel = typeof anchor === "string" ? anchor : anchor.label;
+                    for (const el of allText) {
+                        if (el.textContent?.trim() === anchorLabel) {
+                            found.push(anchor);
+                            let node = el.parentElement;
+                            while (node && node !== document.body) {
+                                if (node.tagName?.startsWith("YTD-") && node.parentElement?.id === "contents") {
+                                    candidates.set(node.tagName, (candidates.get(node.tagName) || 0) + 1);
+                                    break;
+                                }
+                                node = node.parentElement;
+                            }
+                            break;
+                        }
+                    }
+                });
 
-            if (found.length < 2) {
-                logToHUD("WARN", `Anchor search inconclusive — only ${found.length}/${anchors.length} anchors found`);
-                return;
+                beaconCount = found.length;
+                console.log(`[YT-PURGE] Anchor search: ${found.length}/${anchors.length} anchors found`);
+                if (found.length < 2) {
+                    logToHUD("WARN", `Anchor search inconclusive — only ${found.length}/${anchors.length} anchors found`);
+                    return;
+                }
             }
 
             if (!candidates.size) {
-                logToHUD("CRIT", "Pivot failed — anchors found but no YTD container in parent chain");
+                logToHUD("CRIT", "Pivot failed — no YTD container found in parent chain");
                 return;
             }
 
@@ -1128,12 +1151,11 @@
             candidates.forEach((count, tag) => {
                 const isKnown = CONTAINER_TAGS_BASELINE.has(tag) || activeContainerTags.has(tag);
                 if (isKnown) {
-                    logToHUD("INFO", `Pivot confirmed known container: <${tag.toLowerCase()}> (${count}/${anchors.length} anchors)`);
+                    logToHUD("INFO", `Pivot confirmed known container: <${tag.toLowerCase()}> (${count} beacons)`);
                     console.log(`[YT-PURGE] Pivot confirmed known: ${tag} (${count} beacons)`);
                     return;
                 }
 
-                // Unknown tag — validate before committing
                 if (!tag.startsWith("YTD-")) {
                     logToHUD("WARN", `Pivot candidate rejected — not a YTD element: <${tag.toLowerCase()}>`);
                     return;
@@ -1144,9 +1166,8 @@
                     return;
                 }
 
-                // Commit the correction
                 commitCorrection(tag);
-                logToHUD("WARN", `Self-healed: <${tag.toLowerCase()}> (${count}/${anchors.length} anchors) — reattaching observer`);
+                logToHUD("WARN", `Self-healed: <${tag.toLowerCase()}> (${count} beacons) — reattaching observer`);
                 console.log(`[YT-PURGE] Self-heal: committed ${tag}, reattaching observer`);
                 recovered = true;
             });
@@ -1154,7 +1175,6 @@
             captureAndDownloadDOM("anchor-search");
 
             if (recovered) {
-                // Reattach observer and reprocess with the corrected tag set
                 requestAnimationFrame(() => {
                     if (attachNarrowObserver()) {
                         logToHUD("INFO", "Observer reattached after self-heal");

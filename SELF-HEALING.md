@@ -49,10 +49,18 @@ A correction is valid until the health check fires again — at which point the
 anchor search re-runs and either reconfirms it or replaces it. There is no
 time-based expiry. YouTube renames tags in deployments, not gradually.
 
+### Beacon sources
+
+Anchor search has two beacon sources depending on session state:
+
+**Normal path — nuke log:** the last 5 confirmed-nuked titles. These are known to have been fully rendered (passed the hydration gate) before being hidden, making them reliable DOM search targets.
+
+**Cold start — synthetic beacons:** when the nuke log is empty (fresh install, cleared localStorage), anchor search synthesizes beacons from h3 elements currently visible in the DOM. Only h3s whose parent chain contains a YTD-* element that is a direct child of `div#contents` are counted. This is the same structural filter used by `findVideoContainerFromElement`, so it exclusively matches real video card containers. The ≥2 threshold still applies.
+
 ### Confidence threshold
 
 A candidate tag is only persisted if:
-- It appeared as the pivot in ≥2 independent anchor searches
+- It appeared as the pivot for ≥2 independent beacons in a single anchor search run
 - It is a valid YTD- prefixed custom element name
 - It is not already in the hardcoded baseline
 
