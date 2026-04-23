@@ -308,7 +308,8 @@
         titleArea.style.cssText = "display: flex; flex-direction: column; gap: 2px;";
 
         const mainTitle = document.createElement("span");
-        mainTitle.textContent = "☢️ YouTube Tuner v3.9";
+        const { version } = chrome.runtime.getManifest();
+        mainTitle.textContent = `☢️ YouTube Tuner v${version} [ext]`;
         mainTitle.style.cssText = "font-size: 13px; font-weight: 800; color: #ff4757;";
 
         const metaRow = document.createElement("div");
