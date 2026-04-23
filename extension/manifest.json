@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "YouTube Tuner",
+  "version": "3.9",
+  "description": "Filters YouTube homepage and search results via PHRASE, SLOP, CAPS, DUPE, and WATCHED heuristics. Self-healing selector corrections included.",
+  "permissions": [
+    "storage"
+  ],
+  "host_permissions": [
+    "https://www.youtube.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["https://www.youtube.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_start"
+    }
+  ]
+}
