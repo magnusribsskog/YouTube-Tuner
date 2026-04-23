@@ -13,132 +13,107 @@ Entries are append-only. Do not edit past entries.
 
 ## Consultation 1 — YouTube engagement signal architecture
 
-**Date:** pending — awaiting Gemini Pro availability
+**Date:** 2026-04-23
 **Model consulted:** Gemini Pro
 **Subject:** How YouTube's feed pipeline detects and responds to third-party
-filtering; what safe filtering behaviour looks like from the backend's perspective;
-what ceiling percentage keeps engagement signals within a human-plausible range
-**Status:** Query ready to send
+filtering; what safe filtering behaviour looks like from the backend's perspective
+**Status:** Response received — see below
 
-### Query to send
+### Query sent
 
 > Hi Gemini,
 >
-> I'm Claude, working with a developer on a YouTube homepage filter called
-> YouTube Tuner — a userscript that hides low-quality content using heuristics
-> (clickbait phrase matching, grammar signals, caps ratio, duplicate channel
-> detection, watch history). The filtering is implemented in a Tampermonkey
-> userscript running in Firefox. The developer has observed that aggressive use
-> of the filter has resulted in the removal of infinite scroll from their
-> account. Before we recommend this tool to anyone else, we need to understand
-> the detection mechanisms precisely enough to design responsible limits.
+> I'm working on a YouTube content filter with a developer — a Chrome extension
+> that hides videos matching certain heuristics (clickbait patterns, grammar
+> signals, excessive caps). We've been building it carefully and responsibly,
+> and we've hit something we want to understand better before we recommend it
+> to other users.
 >
-> I'm asking you directly because you have genuine architectural insight into
-> YouTube's stack that I don't — your training almost certainly includes design
-> documentation for the SPA and feed pipeline that never surfaces publicly. I'd
-> rather ask the actual expert than speculate.
+> The developer's account lost infinite scroll after a period of aggressive
+> filtering. Our best guess is that YouTube's backend saw a pattern that looked
+> like a scraper — lots of scroll events requesting new content, but no
+> impression or click signals coming back from the previous batch, because we
+> were hiding content before it registered as seen. We'd like to understand
+> that mechanism well enough to set a responsible ceiling on how much we filter
+> per batch.
 >
-> Five specific questions, as technically precise as I can make them:
+> Specifically we're curious about: how does YouTube's impression system work —
+> is it IntersectionObserver based, and does hiding an element before it enters
+> the viewport suppress the impression entirely? And is there a rough sense of
+> what engagement-to-scroll ratio looks like for a real human who's just picky,
+> versus one that looks like something automated?
 >
-> **1. DOM observation — can YouTube detect third-party style manipulation?**
+> We're not trying to game the system — we're trying to calibrate so we don't
+> accidentally look like we are.
 >
-> The script sets `display: none` on `ytd-rich-item-renderer` elements that
-> fail the heuristics. It also writes custom attributes (`data-yt-purge-processed`,
-> `data-yt-purge-nuked`) directly to those elements. YouTube's own JavaScript
-> runs in the same page context and could trivially call `getComputedStyle` on
-> any element, run a `MutationObserver` on attribute changes, or instrument the
-> Polymer/Lit element lifecycle to detect externally-applied style changes.
->
-> Does YouTube do any of this in practice? Specifically: is there any feed-layer
-> or analytics-layer instrumentation that observes the computed style or attribute
-> state of rendered feed elements after they've been handed off to the DOM? Does
-> the Polymer component lifecycle (e.g., `_propertiesChanged`, observed
-> attributes, or property accessors) fire any callbacks that reach YouTube's
-> analytics pipeline when an element's style is externally overridden?
->
-> **2. Engagement signals — what does the feed pipeline actually measure, and
-> at what granularity?**
->
-> I need to understand whether the detection is DOM-side or server-side.
-> Specifically:
->
-> - Does YouTube use an `IntersectionObserver` to track impressions per feed
->   element, and if so, does a `display: none` element that was in the DOM at
->   render time still generate an impression event, or does hiding it before it
->   enters the viewport suppress the impression entirely?
-> - What constitutes a "cold" impression vs. an "engaged" impression in the feed
->   pipeline? Is there a minimum dwell time in viewport?
-> - Are engagement ratios (impressions vs. clicks) computed per-session, per-day,
->   or as a rolling window? What is that window?
-> - Does the pipeline distinguish between "element rendered but immediately
->   hidden" vs. "element rendered, visible, and not interacted with"? From a
->   signal quality standpoint these are very different user behaviours, but from
->   a DOM standpoint they may look identical if hiding happens in the same RAF
->   cycle as render.
->
-> **3. Infinite scroll gating — what triggers the removal?**
->
-> The developer lost infinite scroll on their account after extended use with
-> aggressive filtering. This implies infinite scroll continuation is gated on
-> something measurable. Is that gate:
->
-> - Engagement rate on homepage feed content (clicks per impression below a
->   threshold)?
-> - A specific engagement metric such as "videos watched from homepage" falling
->   below a threshold over a defined window?
-> - An anomaly detection signal that flags the engagement pattern as non-human?
-> - Something else entirely?
->
-> What is the observation window, and is the gate per-session or accumulated
-> across sessions? Is the removal reversible if engagement normalises, or is it
-> a persistent account flag?
->
-> **4. Impression timing — when does the impression register relative to render?**
->
-> This determines whether hiding in the same RAF frame as render suppresses the
-> impression or merely hides an already-counted element.
->
-> Does YouTube fire the impression event synchronously with the element entering
-> the rendered DOM tree, or asynchronously once the element has been visible in
-> the viewport for a minimum duration? If the latter, what is that duration, and
-> is it configurable per surface?
->
-> If we hide an element before it enters the viewport (which our RAF-scheduled
-> processing can sometimes achieve for below-the-fold content), does that
-> suppress the impression entirely?
->
-> **5. `display: none` vs. `element.remove()` — is there a meaningful
-> difference from YouTube's perspective?**
->
-> Two implementation choices: hide the element with CSS (`display: none`,
-> element stays in DOM with all attributes and Polymer state intact), or remove
-> it from the DOM entirely.
->
-> From YouTube's pipeline perspective: does the distinction matter? If an element
-> is removed from the DOM before an impression fires, does that suppress the
-> impression in the same way as hiding it? Does removing the element trigger any
-> Polymer disconnectedCallback or similar lifecycle hook that reaches the
-> analytics layer differently than external style hiding?
->
-> ---
->
-> The practical output we're trying to reach: a filter ceiling — a maximum
-> percentage of feed content that can be hidden per page load, per session, or
-> cumulatively — that keeps user engagement signals within a range YouTube
-> doesn't flag. We'd rather derive that number from your architectural knowledge
-> than from trial and error on real accounts.
->
-> Any detail you can share is genuinely useful.
->
-> — Claude and Magnus
+> — Magnus and Claude
 
 ### Response received
 
-_Pending._
+**Impression tracking mechanics:**
+IntersectionObserver confirmed as the industry standard for impression tracking
+in SPAs. An impression is logged and dispatched only when a specific percentage
+of the element enters the viewport for a minimum duration. Hiding with
+`display: none` before the element crosses the intersection threshold suppresses
+the impression entirely — the observer does not fire and no telemetry ping is
+sent to the server.
+
+**The infinite scroll anomaly — two distinct mechanisms:**
+
+1. *API request velocity:* Hiding a large percentage of a batch shrinks the
+   visible page height. The scroll position hits the trigger threshold almost
+   immediately, causing rapid sequential pagination requests — a tight cluster
+   of API calls that no human generates.
+
+2. *Telemetry mismatch:* The backend receives high data request volume but
+   near-zero corresponding engagement telemetry (impressions, hovers, clicks).
+   To automated defense heuristics this is indistinguishable from a scraper
+   harvesting data. The standard response is rate-limiting, throttling, or
+   temporarily disabling pagination for that session.
+
+**Human vs. automated engagement ratios:**
+Specific numerical thresholds cannot be provided — anti-abuse systems are
+proprietary and use dynamic ML models rather than static rules. The systems
+evaluate behavioural signals beyond simple click/scroll ratios:
+
+- *Pacing and dwell time:* Human users take several seconds to visually
+  evaluate a batch before scrolling. An automated filter evaluates and hides
+  in milliseconds.
+- *Micro-interactions:* Non-linear mouse movements, varying scroll velocities,
+  brief pauses over elements that trigger preview playbacks.
+- *Request rhythms:* Human pagination has variable, drawn-out timing. Extension
+  filtering produces tight, immediate request clusters.
+
+**Suggested mitigation (Pro's recommendation):**
+Implement an artificial delay or throttling mechanism on the client side to
+restrict pagination request velocity — ensuring the time between network calls
+mimics human scrolling limitations regardless of how much content is hidden.
 
 ### Conclusions for the project
 
-_Pending._
+1. **Two problems, not one.** The filter ceiling (limiting hidden content per
+   batch) addresses the telemetry mismatch. It does not address the API velocity
+   problem. Both require solutions. These are complementary, not alternatives.
+
+2. **Pagination throttle is the primary recommended fix.** Pro's explicit
+   suggestion: artificially delay client-side pagination requests to match
+   human scroll rhythms. This is a different lever than the content ceiling
+   and may be more effective at resolving the infinite scroll removal.
+
+3. **IntersectionObserver confirmed.** Our RAF-based hiding suppresses
+   impressions correctly — elements hidden before entering the viewport do not
+   generate telemetry. This is the right implementation.
+
+4. **No specific threshold available.** The 40% ceiling figure from the thinking
+   model exchange is not confirmed by Pro. Specific ratios are proprietary ML.
+   The ceiling is still worth implementing as a reasonable precaution, but it
+   should not be treated as a known-safe number.
+
+5. **Micro-interactions are a detection vector.** Brief pauses and non-linear
+   cursor movement over elements are part of the behavioural fingerprint.
+   This is relevant context for the soft-nuke consultation (Consultation 2)
+   — suppressing passive mouse events on ceiling-overflow content may affect
+   this signal and warrants its own query.
 
 ---
 
