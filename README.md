@@ -87,3 +87,4 @@ is transmitted anywhere. No analytics, no telemetry, no external services.
 ## Authors
 
 Magnus Ribsskog and Claude — [Unlicense](https://unlicense.org/) / Public Domain
+
