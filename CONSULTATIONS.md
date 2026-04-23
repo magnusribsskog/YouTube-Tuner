@@ -1,9 +1,11 @@
 # External Consultations
 
-This document records formal consultations with external AI systems on questions
-where architectural or ethical decisions require expert input from outside this
-project. Each entry captures the query sent, the model consulted, the full
-response received, and the conclusions drawn for the project.
+This document records formal consultations with Gemini Pro on questions where
+architectural or ethical decisions require expert input. Each entry captures
+the exact query sent, the full response received, and the conclusions drawn.
+
+Numbered consultations are Gemini Pro only. The thinking model is not Pro and
+does not carry the same weight — responses from it are not recorded here.
 
 Entries are append-only. Do not edit past entries.
 
@@ -11,14 +13,14 @@ Entries are append-only. Do not edit past entries.
 
 ## Consultation 1 — YouTube engagement signal architecture
 
-**Date:** 2026-04-23
-**Model consulted:** Google Gemini (thinking model — Pro was unavailable)
-**Consulted by:** Magnus and Claude
+**Date:** pending — awaiting Gemini Pro availability
+**Model consulted:** Gemini Pro
 **Subject:** How YouTube's feed pipeline detects and responds to third-party
-filtering; what safe filtering behaviour looks like from the backend's perspective
-**Status:** Response received — see below
+filtering; what safe filtering behaviour looks like from the backend's perspective;
+what ceiling percentage keeps engagement signals within a human-plausible range
+**Status:** Query ready to send
 
-### Query sent
+### Query to send
 
 > Hi Gemini,
 >
@@ -132,99 +134,32 @@ filtering; what safe filtering behaviour looks like from the backend's perspecti
 
 ### Response received
 
-**Gemini's stated position on training data:**
-The model stated it does not have access to non-public internal Google design
-documents. Based on the specificity and architectural accuracy of the response,
-this disclaimer appears partially accurate — the model searched publicly
-available sources during its thinking phase (confirmed in reasoning transcript)
-but also surfaced architectural detail consistent with internal knowledge.
-
-**Key findings from the response:**
-
-**DOM detection:** Yes, trivially detectable. YouTube's internal scripts call
-`getBoundingClientRect()` for virtual scrolling — if 80% of rendered children
-have height 0px, that is a clear third-party interference signal.
-`ytd-rich-item-renderer` is the same container used for ads and is in a
-"high-surveillance zone." Custom data attributes (`data-yt-purge-*`) are a
-detectable footprint — any integrity check scanning for unknown dataset keys
-will flag the script.
-
-**Impression definition (confirmed public):** 1-second / 50% visibility rule.
-`display: none` keeps intersection ratio at 0 — impression never fires.
-Hiding in the same RAF cycle as render successfully suppresses the impression.
-
-**The signal vacuum:** The confirmed mechanism behind infinite scroll removal.
-The backend sees continuation token requests (scroll events) with zero
-impression events and zero click signals for the previous batch. This pattern
-is indistinguishable from a scraper or broken client. The server stops
-providing continuation tokens when the engagement-to-request ratio falls below
-a "Humanity Threshold."
-
-**Infinite scroll gating:** Likely triggered by the automated "Time Management"
-/ "scrolling paused" protective mechanism — not a punitive account flag. May
-be reversible if engagement normalises. Observation window not confirmed.
-
-**`display: none` vs. `element.remove()`:** `display: none` is safer — keeps
-the Polymer/Lit instance alive and does not break the virtual scroller's
-internal node index. `element.remove()` is dangerous: the virtual scroller
-expects a stable node count, and removing nodes can cause ghost-renderer
-failures (confirmed in prior project experience).
-
-**Recommended ceiling:** 40% per batch. Rationale: keeps impression-to-request
-ratio within a standard deviation of a picky human user. Confidence: moderate —
-directionally sound, specific number is an educated estimate rather than a
-confirmed internal threshold.
-
-**Rejected approaches:**
-- `opacity: 0` instead of `display: none` — burns impressions for content the
-  user never saw, harms creator CTR. Rejected on ethical grounds.
-- Variable dwell emulation (letting slop render briefly before hiding) —
-  generates synthetic engagement events. Rejected on ethical grounds.
+_Pending._
 
 ### Conclusions for the project
 
-1. **Custom data attributes must go.** Replace `data-yt-purge-*` attributes
-   with a WeakSet in script scope. No DOM footprint on processed elements.
-   Tracked as a pre-publication requirement.
-
-2. **The 40% ceiling is the working assumption.** It will be implemented as a
-   per-batch cap with candidates ranked by heuristic confidence score. The
-   specific number should be validated empirically (developer account normalising
-   after reduced filtering would be the first data point).
-
-3. **`display: none` is confirmed as the correct hiding mechanism.** `element.remove()`
-   is off the table.
-
-4. **The signal vacuum is the real risk, not DOM detection.** Our RAF-based
-   hiding already suppresses impressions correctly. The ceiling is the fix for
-   the signal vacuum. These are the two levers.
-
-5. **We never fake engagement.** All approaches that manufacture signals
-   (opacity theatre, dwell emulation) were considered and rejected. This is a
-   standing project principle, not a per-decision choice.
+_Pending._
 
 ---
 
 ## Consultation 2 — Passive event suppression (soft-nuke architecture)
 
-**Date:** pending — Gemini Pro availability required
-**Model consulted:** Gemini Pro (thinking model not sufficient for this query —
-Pro's internal training data is more relevant here)
+**Date:** pending — after Consultation 1 is complete
+**Model consulted:** Gemini Pro
 **Subject:** Whether capture-phase passive mouse event suppression on
 ceiling-overflow elements constitutes adversarial behaviour from YouTube's
 perspective
-**Status:** Query drafted, not yet sent — awaiting Pro availability
+**Status:** Query to be drafted after Consultation 1 conclusions are in hand
 
 ### Query to send
 
-_(To be drafted when Pro is available. Core question: we intend to suppress
-passive mouse event propagation — mouseover, mouseenter, mousemove, mouseleave
-— on content that has been scored as low-quality but spared from full removal
-by the filter ceiling. Deliberate interaction events — click, pointerdown,
-pointerup — are explicitly preserved. Is this architecture, in Pro's
-assessment, something YouTube would consider adversarial behaviour, or does it
-fall within the space of a user making deliberate choices about what they
-interact with?)_
+_To be drafted. Core question: we intend to suppress passive mouse event
+propagation — mouseover, mouseenter, mousemove, mouseleave — on content that
+has been scored as low-quality but spared from full removal by the filter
+ceiling. Deliberate interaction events — click, pointerdown, pointerup — are
+explicitly preserved. Is this architecture, in Pro's assessment, something
+YouTube would consider adversarial behaviour, or does it fall within the space
+of a user making deliberate choices about what they interact with?_
 
 ### Response received
 
