@@ -63,14 +63,25 @@
     ]);
 
     // ======================== CONTAINER TAG BASELINE ========================
-    // Hardcoded known-good tag set. This is the cold-start baseline and is
-    // never modified at runtime. Stored corrections are merged on top of
-    // this set to produce activeContainerTags. If storage is cleared,
-    // cold start falls back here identically to v3.8 behaviour.
+    // Hardcoded known-good tag set. Never modified at runtime. Stored
+    // corrections are merged on top via buildActiveTagSet() to produce
+    // activeContainerTags. If storage is cleared, cold start falls back
+    // here identically to pre-self-healing behaviour.
     //
-    // TEST HARNESS: two tags have been deliberately broken to simulate a
-    // YouTube selector rename. The self-healing logic should discover and
-    // correct them within one page load once anchor search finds ≥2 beacons.
+    // Self-healing design:
+    //   When the health check fires a CRIT and anchor search finds pivot
+    //   candidates, the code validates the candidate (≥2 beacon matches),
+    //   writes the discovered tag to storage with a timestamp and hit count,
+    //   adds it to activeContainerTags for the current session, reattaches
+    //   the observer, and re-runs processPage(). No time-based expiry —
+    //   corrections are valid until a subsequent anchor search replaces them.
+    //
+    // Storage entry format (per correction):
+    //   { tag, discovered: ISO8601, hits: number, last_confirmed: ISO8601 }
+    //
+    // Known selector mutations (maintained manually as corrections are
+    // discovered in the field — see git log for history):
+    //   none recorded yet
     const CONTAINER_TAGS_BASELINE = new Set([
         "YTD-RICH-ITEM-RENDERER",
         "YTD-COMPACT-VIDEO-RENDERER",
@@ -948,6 +959,27 @@
     }
 
     // ======================== DIAGNOSTIC EXPORT ========================
+    // Exported via the ✱ button. Downloaded as yt-tuner-diag-<ctx>-<ts>.md.
+    //
+    // Format:
+    //   ## Header
+    //   session_id, exported_at, page_context, scan_count, nuke_count
+    //
+    //   ## Filters
+    //   One row per heuristic: filter | enabled | caught
+    //
+    //   ## Custom Phrases
+    //   Persistent phrase list, or "_none_"
+    //
+    //   ## Selector Corrections
+    //   Active corrections from storage, or "_none_"
+    //
+    //   ## Nuke Log
+    //   Last 5 nuked titles (most recent first): [REASON] title
+    //
+    //   ## System Events
+    //   All WARN and CRIT entries this session. "none" if clean.
+    //   INFO entries are omitted — noise at this level.
     async function exportDiagnostic() {
         const ctx       = getPageContext();
         const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
@@ -1071,6 +1103,13 @@
     //   - Tag name starts with "YTD-"
     //   - Not already in CONTAINER_TAGS_BASELINE
     //   - ≥2 independent beacons confirmed the tag as pivot
+    //
+    // Failure modes:
+    //   Bad pivot persisted    → health check re-runs next page load and
+    //                            re-evaluates; hardcoded baseline continues
+    //   No beacons found       → no correction attempted; CRIT remains in HUD
+    //   YouTube reverts rename → old tag reappears; baseline already covers it
+    //   Storage cleared        → cold start; baseline takes over immediately
 
     async function runAnchorSearch() {
         const anchors = await loadNukeLog();
