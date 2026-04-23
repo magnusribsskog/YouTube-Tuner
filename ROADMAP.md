@@ -196,6 +196,37 @@ waitForPrimaryTarget polling chain, SPA re-attachment on renderer change only.
 
 ## Planned
 
+### Pre-publication gate — Engagement signal consultation (blocking)
+
+**This gate must be cleared before the extension is recommended to any user
+other than the developer. It is not a feature. It is the precondition for
+responsible publication.**
+
+We have direct evidence that aggressive filtering produces a "signal vacuum" —
+the YouTube backend sees continuation token requests with no corresponding
+impression or click events, and responds by throttling features (confirmed:
+infinite scroll removal on developer account). The safe filtering threshold is
+not known precisely. Publishing without establishing it risks damaging other
+users' accounts silently.
+
+Required steps, in order:
+
+1. **Gemini Pro consultation on filter ceiling** — query Pro with the specific
+   architecture: per-batch ceiling, confidence-scored candidate prioritisation,
+   honest impressions (no opacity theatre, no fake engagement). Request their
+   assessment of what ceiling percentage keeps the engagement ratio within a
+   range YouTube's systems treat as human. Retain the full session transcript
+   as a due diligence artifact.
+
+2. **Filter ceiling implementation** — per-batch cap, candidates ranked by
+   heuristic confidence score, weakest matches pass through. The ceiling number
+   is informed by the Pro consultation, not assumed. HUD shows ceiling
+   activations so the user knows when it is constraining the filter.
+
+3. **Publication path** — icons (16×16, 48×48, 128×128), privacy disclosure
+   (all data local, nothing transmitted), Chrome Web Store submission. Firefox
+   support follows once Chrome build is stable.
+
 ### v3.6.11 — Targeted insertion observer (performance)
 - Replace processPage() full h3 scan on every mutation
 - Keep narrowed observer on ytd-two-column-browse-results-renderer
@@ -209,49 +240,56 @@ waitForPrimaryTarget polling chain, SPA re-attachment on renderer change only.
   force-evaluate with whatever title exists (prevents permanent hang)
 - Consider 50ms debounce when multiple containers added in rapid succession
 
-### v3.10 — Filter ceiling + soft-nuke (engagement hygiene)
+### v4.0 — Extension stabilisation (in progress)
+- Chrome extension prototype running: manifest, content script, storage layer ported
+- Remove dev tools (DOM capture 📸, diagnostic export ✱) from published build,
+  or gate behind a developer flag
+- Version displayed in HUD from manifest — no hardcoded strings
+- Post-commit hook syncs extension/ to Windows filesystem automatically
+- Firefox support: web-ext build after Chrome is stable
 
-**Status: Design phase. Do not implement until all gates below are cleared.**
+### v4.1 — Semantic heuristic pipeline
+- Density throttling: limit videos per semantic cluster per batch
+  (generalisation of channel dedup, uses existing tokeniser, no LLM needed)
+- LLM cluster identification (optional external service): generates local
+  heuristics from novel batches, never blocks filtering
+- ClusterMap with half-life decay: persistent signatures expire over time
+  score_new = score_old × 0.5^(t / t_half)
+- Requires filter ceiling (pre-publication gate) to be in place first;
+  a smarter filter that runs without a ceiling still risks signal vacuum
 
-- Per-batch filter ceiling: hide at most ~40% of any single continuation batch;
-  candidates ranked by heuristic confidence score, weakest matches pass through
+### Soft-nuke — Passive event suppression (gated, not yet sequenced)
+
+**Do not implement until the gates below are cleared. Separate from the
+filter ceiling — this is a distinct ethical question requiring its own sign-off.**
+
 - Ceiling-overflow elements ("soft-nuked"): scored as slop but spared by ceiling
-- Soft-nuke suppresses passive mouse event propagation on ceiling-overflow elements:
-  mouseover, mouseenter, mouseleave, mouseout, mousemove intercepted and swallowed
-  via a single capture-phase listener registered on document at document-start,
-  before YouTube's own listeners are registered
+- Suppresses passive mouse event propagation on ceiling-overflow elements:
+  mouseover, mouseenter, mouseleave, mouseout, mousemove swallowed via a single
+  capture-phase listener registered on document at document-start
 - Deliberate interaction events (click, pointerdown, pointerup) explicitly
   preserved — only intentional engagement propagates to the recommendation pipeline
 - No DOM footprint: soft-nuked state tracked in WeakSet, no data attributes written
-- HUD reports both counts separately: "14 nuked, 3 soft-nuked"
-- No fake impressions, no opacity theatre — all impressions are honest
+- No fake impressions — all impressions are honest
 
-**Required gates before any implementation:**
+Required gates:
+1. Gemini Pro sign-off on the specific event suppression architecture —
+   retain full session transcript as due diligence artifact
+2. Dedicated test branch — never merged to main until validated
+3. Throwaway account test environment — clean profile, no fingerprint overlap
+   with main account; test protocol designed before any code is written
 
-1. **Gemini Pro sign-off:** query Pro with the specific soft-nuke architecture
-   (capture-phase passive event suppression, deliberate events preserved) and
-   confirm the assessment is "unremarkable" or "that's interesting" rather than
-   "adversarial." Documented session transcript to be retained as due diligence
-   artifact. Do not proceed without this.
+---
 
-2. **Dedicated test fork:** implement on a named branch, never on main until
-   fully validated
+## Vision / Pivot
 
-3. **Throwaway account test environment:** clean browser profile, separate from
-   main account, no shared session cookies or fingerprint overlap. Test protocol
-   to be designed before any code is written — define what "pass" and "fail"
-   look like over what observation window before deployment.
+These are not numbered releases. They represent a different class of work —
+architectural directions that require their own design phase before any
+implementation begins.
 
-### v4.0 — Extension migration (Manifest V3 / Firefox WebExtensions)
-- Replace localStorage with browser.storage.local
-- Scope content script to www.youtube.com with page type detection
-- HUD as injectable UI (same design, extension-managed)
-- Userscript maintained alongside extension — both supported
-- Extension skeleton already exists locally (YouTube Clickbait Remover codebase)
-
-### v4.1 — LLM-assisted last-resort self-healing
-- Triggered when in-page self-healing (v3.9) fails completely: CRIT persists after
-  anchor search exhausts its candidates
+### LLM-assisted last-resort self-healing
+- Triggered when in-page self-healing (v3.9) fails completely: CRIT persists
+  after anchor search exhausts its candidates
 - Extension saves DOM snapshot to a local temp file via native messaging host
 - Native messaging host launches `claude` with the dump and a preflight prompt
   specifying the selector map format — output is always machine-readable JSON,
@@ -263,16 +301,19 @@ waitForPrimaryTarget polling chain, SPA re-attachment on renderer change only.
 - On changed ETag or version field, extension applies new selectors and reports
   recovery; times out to a plain CRIT after a defined window if no update arrives
 - Selector map format must be specced (like DIAGNOSTIC.md) before implementation
-- Requires extension migration (v4.0) and a native messaging host
+- Requires extension build and a native messaging host
+- This is genuinely fun engineering and will happen — just not on a fixed schedule
 
-### v4.2 — Semantic heuristic pipeline
-- Density throttling: limit videos per semantic cluster per batch
-  (generalisation of channel dedup, uses existing tokeniser, no LLM needed)
-- LLM cluster identification (optional external service): generates local
-  heuristics from novel batches, never blocks filtering
-- ClusterMap with half-life decay: persistent signatures expire over time
-  score_new = score_old × 0.5^(t / t_half)
-- Requires extension migration (v4.0) first; pairs naturally with v4.1
+### Clown Mode 🤡
+- Hot pink HUD with polka dots, Comic Sans, every nuke a performance
+- Nuke animations: violent shake, rotation, confetti canvas, BOING via Web Audio
+- Reverse Polarity toggle: hide everything EXCEPT clickbait — a museum of cringe
+- Laugh track per nuke (sine wave sweep, no external audio files)
+- Circus tent HUD: striped border, emoji log levels, "SENT TO THE CIRCUS" counter
+- Random chaos injection every 10 seconds while active
+- "MAXIMUM CHAOS" toggle: all heuristic thresholds lowered to absurd levels
+- Self-heal fanfare: three ascending beeps, confetti, "THE CIRCUS FIXED YOUTUBE AGAIN 🤡🎉"
+- Ships when the serious work is done. Will ship.
 
 ---
 
