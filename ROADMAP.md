@@ -216,14 +216,30 @@ waitForPrimaryTarget polling chain, SPA re-attachment on renderer change only.
 - Userscript maintained alongside extension — both supported
 - Extension skeleton already exists locally (YouTube Clickbait Remover codebase)
 
-### v4.1 — Semantic heuristic pipeline
+### v4.1 — LLM-assisted last-resort self-healing
+- Triggered when in-page self-healing (v3.9) fails completely: CRIT persists after
+  anchor search exhausts its candidates
+- Extension saves DOM snapshot to a local temp file via native messaging host
+- Native messaging host launches `claude` with the dump and a preflight prompt
+  specifying the selector map format — output is always machine-readable JSON,
+  never prose
+- Claude updates `selectors.json` in the local repo and commits; push requires
+  explicit auth (bot token in host config, or manual user push as approver)
+- Extension polls `raw.githubusercontent.com` for the selector file on a slow
+  interval while HUD shows "Self-healing engaged — awaiting updated definitions"
+- On changed ETag or version field, extension applies new selectors and reports
+  recovery; times out to a plain CRIT after a defined window if no update arrives
+- Selector map format must be specced (like DIAGNOSTIC.md) before implementation
+- Requires extension migration (v4.0) and a native messaging host
+
+### v4.2 — Semantic heuristic pipeline
 - Density throttling: limit videos per semantic cluster per batch
   (generalisation of channel dedup, uses existing tokeniser, no LLM needed)
 - LLM cluster identification (optional external service): generates local
   heuristics from novel batches, never blocks filtering
 - ClusterMap with half-life decay: persistent signatures expire over time
   score_new = score_old × 0.5^(t / t_half)
-- Requires extension migration (v4.0) first
+- Requires extension migration (v4.0) first; pairs naturally with v4.1
 
 ---
 
