@@ -313,7 +313,7 @@ implementation begins.
 - Random chaos injection every 10 seconds while active
 - "MAXIMUM CHAOS" toggle: all heuristic thresholds lowered to absurd levels
 - Self-heal fanfare: three ascending beeps, confetti, "THE CIRCUS FIXED YOUTUBE AGAIN 🤡🎉"
-- Ships when the serious work is done. Will ship.
+- Ships when the serious work is done. Should probably include a safety valve that automatically turns it off after a hot minute.
 
 ---
 
