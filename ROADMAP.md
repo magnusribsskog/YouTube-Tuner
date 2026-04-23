@@ -209,6 +209,39 @@ waitForPrimaryTarget polling chain, SPA re-attachment on renderer change only.
   force-evaluate with whatever title exists (prevents permanent hang)
 - Consider 50ms debounce when multiple containers added in rapid succession
 
+### v3.10 — Filter ceiling + soft-nuke (engagement hygiene)
+
+**Status: Design phase. Do not implement until all gates below are cleared.**
+
+- Per-batch filter ceiling: hide at most ~40% of any single continuation batch;
+  candidates ranked by heuristic confidence score, weakest matches pass through
+- Ceiling-overflow elements ("soft-nuked"): scored as slop but spared by ceiling
+- Soft-nuke suppresses passive mouse event propagation on ceiling-overflow elements:
+  mouseover, mouseenter, mouseleave, mouseout, mousemove intercepted and swallowed
+  via a single capture-phase listener registered on document at document-start,
+  before YouTube's own listeners are registered
+- Deliberate interaction events (click, pointerdown, pointerup) explicitly
+  preserved — only intentional engagement propagates to the recommendation pipeline
+- No DOM footprint: soft-nuked state tracked in WeakSet, no data attributes written
+- HUD reports both counts separately: "14 nuked, 3 soft-nuked"
+- No fake impressions, no opacity theatre — all impressions are honest
+
+**Required gates before any implementation:**
+
+1. **Gemini Pro sign-off:** query Pro with the specific soft-nuke architecture
+   (capture-phase passive event suppression, deliberate events preserved) and
+   confirm the assessment is "unremarkable" or "that's interesting" rather than
+   "adversarial." Documented session transcript to be retained as due diligence
+   artifact. Do not proceed without this.
+
+2. **Dedicated test fork:** implement on a named branch, never on main until
+   fully validated
+
+3. **Throwaway account test environment:** clean browser profile, separate from
+   main account, no shared session cookies or fingerprint overlap. Test protocol
+   to be designed before any code is written — define what "pass" and "fail"
+   look like over what observation window before deployment.
+
 ### v4.0 — Extension migration (Manifest V3 / Firefox WebExtensions)
 - Replace localStorage with browser.storage.local
 - Scope content script to www.youtube.com with page type detection
