@@ -72,9 +72,9 @@
     // YouTube selector rename. The self-healing logic should discover and
     // correct them within one page load once anchor search finds ≥2 beacons.
     const CONTAINER_TAGS_BASELINE = new Set([
-        "YTD-RICH-ITEM-RENDERER-BROKEN",        // real: YTD-RICH-ITEM-RENDERER
+        "YTD-RICH-ITEM-RENDERER",
         "YTD-COMPACT-VIDEO-RENDERER",
-        "YTD-VIDEO-RENDERER-BROKEN",            // real: YTD-VIDEO-RENDERER
+        "YTD-VIDEO-RENDERER",
         "YTD-GRID-VIDEO-RENDERER",
         "YTD-REEL-ITEM-RENDERER",
         "YTD-SHELF-RENDERER",
