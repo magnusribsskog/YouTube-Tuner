@@ -1140,29 +1140,29 @@
 
             let recovered = false;
 
-            candidates.forEach((count, tag) => {
+            for (const [tag, count] of candidates) {
                 const isKnown = CONTAINER_TAGS_BASELINE.has(tag) || activeContainerTags.has(tag);
                 if (isKnown) {
                     logToHUD("INFO", `Pivot confirmed known container: <${tag.toLowerCase()}> (${count} beacons)`);
                     console.log(`[YT-PURGE] Pivot confirmed known: ${tag} (${count} beacons)`);
-                    return;
+                    continue;
                 }
 
                 if (!tag.startsWith("YTD-")) {
                     logToHUD("WARN", `Pivot candidate rejected — not a YTD element: <${tag.toLowerCase()}>`);
-                    return;
+                    continue;
                 }
 
                 if (count < 2) {
                     logToHUD("WARN", `Pivot candidate below threshold: <${tag.toLowerCase()}> (${count} beacon)`);
-                    return;
+                    continue;
                 }
 
                 await commitCorrection(tag);
                 logToHUD("WARN", `Self-healed: <${tag.toLowerCase()}> (${count} beacons) — reattaching observer`);
                 console.log(`[YT-PURGE] Self-heal: committed ${tag}, reattaching observer`);
                 recovered = true;
-            });
+            }
 
             captureAndDownloadDOM("anchor-search");
 
