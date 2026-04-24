@@ -704,6 +704,7 @@
 
     // ======================== CHANNEL NAME EXTRACTION ========================
     const CHANNEL_SELECTORS = [
+        "yt-content-metadata-view-model a[href^='/@']", // lockup card format (current)
         "ytd-channel-name #text",
         "#channel-name #text",
         "#channel-name",
@@ -753,6 +754,59 @@
         return null;
     }
 
+    // ======================== WATCHED PERCENT ========================
+    function getWatchedPercent(container) {
+        // Tier 1: known selector, light DOM
+        let progressBar = container.querySelector(
+            "ytd-thumbnail-overlay-resume-playback-renderer #progress"
+        );
+        if (progressBar) {
+            if (!progressBar.style.width) return null;
+            const pct = parseInt(progressBar.style.width, 10);
+            console.log(`[DIAG][WATCHED] light-DOM → ${pct}%`);
+            return isNaN(pct) ? null : pct;
+        }
+
+        // Tier 2: shadow DOM on the overlay renderer
+        const renderer = container.querySelector("ytd-thumbnail-overlay-resume-playback-renderer");
+        if (renderer) {
+            if (!renderer.shadowRoot) {
+                console.log("[DIAG][WATCHED] renderer present, no shadowRoot");
+            } else {
+                progressBar = renderer.shadowRoot.querySelector("#progress");
+                if (!progressBar) {
+                    console.log("[DIAG][WATCHED] shadow-DOM: renderer found, #progress absent");
+                } else if (!progressBar.style.width) {
+                    console.log("[DIAG][WATCHED] shadow-DOM: #progress found, width not set");
+                } else {
+                    const pct = parseInt(progressBar.style.width, 10);
+                    console.log(`[DIAG][WATCHED] shadow-DOM → ${pct}%`);
+                    return isNaN(pct) ? null : pct;
+                }
+            }
+        }
+
+        // Tier 3: structural fallback — search thumbnail subtree for any
+        // percentage-width element whose id or class contains "progress".
+        // Constrained to ytd-thumbnail to avoid false positives from text content.
+        const thumbnail = container.querySelector("ytd-thumbnail");
+        if (thumbnail) {
+            const candidates = thumbnail.querySelectorAll('[style*="width"]');
+            for (const el of candidates) {
+                const id  = el.id?.toLowerCase() || "";
+                const cls = typeof el.className === "string" ? el.className.toLowerCase() : "";
+                if (!id.includes("progress") && !cls.includes("progress")) continue;
+                const pct = parseInt(el.style.width, 10);
+                if (!isNaN(pct) && pct > 0) {
+                    console.log(`[DIAG][WATCHED] structural fallback → ${pct}% on #${el.id || "(no-id)"} .${el.className || "(no-class)"}`);
+                    return pct;
+                }
+            }
+        }
+
+        return null;
+    }
+
     // ======================== HYDRATION GATE ========================
     const containerCreatedAt = new WeakMap();
 
@@ -777,6 +831,18 @@
         }
     }
 
+    // ======================== UNHIDE WATCHER ========================
+    function watchForUnhide(container, label) {
+        const watcher = new MutationObserver(() => {
+            const d = container.style.display;
+            if (d !== "none") {
+                console.warn(`[DIAG][UNHIDE] display restored to "${d || "empty"}" — "${label}"`);
+                logToHUD("WARN", `[UNHIDE] ${label}`);
+            }
+        });
+        watcher.observe(container, { attributes: true, attributeFilter: ["style"] });
+    }
+
     // ======================== NUKE HELPER ========================
     function nuke(container, reason, label) {
         const isFirstNuke = !container.dataset.ytPurgeNuked;
@@ -789,12 +855,14 @@
             }
             logToHUD(reason, label);
             recordNuke(reason, label);
+            watchForUnhide(container, label);
         }
         container.style.setProperty("display", "none", "important");
     }
 
     // ======================== PROCESSING ========================
     let scanCount = 0;
+    let seenChannels = new Set(); // session-level channel tracking; cleared on yt-navigate-finish
 
     function processPage() {
         const ctx = getPageContext();
@@ -825,8 +893,6 @@
             return;
         }
 
-        const channelSeen = new Map();
-
         titles.forEach(h3 => {
             const title = h3.textContent?.trim();
             if (!title || title.length < 3) return;
@@ -839,7 +905,29 @@
                 return;
             }
 
-            if (container.dataset.ytPurgeProcessed === `${sessionId}:${title}`) return;
+            if (container.dataset.ytPurgeProcessed === `${sessionId}:${title}`) {
+                if (!container.dataset.ytPurgeNuked) {
+                    if (heuristics.WATCHED.enabled) {
+                        const percent = getWatchedPercent(container);
+                        if (percent !== null && percent > 90) {
+                            nuke(container, "WATCHED", `[${percent}%] ${title}`);
+                            return;
+                        }
+                    }
+                    if (!container.dataset.ytPurgeDupeDone && heuristics.DUPE.enabled) {
+                        const channelName = getChannelName(container);
+                        if (channelName) {
+                            container.dataset.ytPurgeDupeDone = "1";
+                            if (seenChannels.has(channelName)) {
+                                nuke(container, "DUPE", `${channelName} — ${title}`);
+                                return;
+                            }
+                            seenChannels.add(channelName);
+                        }
+                    }
+                }
+                return;
+            }
 
             if (!isContainerLive(container, title)) {
                 container.dataset.ytPurgePending = "1";
@@ -853,28 +941,25 @@
             container.dataset.ytPurgeProcessed = `${sessionId}:${title}`;
             console.log(`[DIAG] container: <${container.tagName.toLowerCase()}> — "${title}"`);
 
+            classifyTitle(title);
+
             if (heuristics.DUPE.enabled) {
                 const channelName = getChannelName(container);
                 if (channelName) {
-                    const count = (channelSeen.get(channelName) || 0) + 1;
-                    channelSeen.set(channelName, count);
-                    if (count > 1) {
+                    container.dataset.ytPurgeDupeDone = "1";
+                    if (seenChannels.has(channelName)) {
                         nuke(container, "DUPE", `${channelName} — ${title}`);
                         return;
                     }
+                    seenChannels.add(channelName);
                 }
             }
 
             if (heuristics.WATCHED.enabled) {
-                const progressBar = container.querySelector(
-                    "ytd-thumbnail-overlay-resume-playback-renderer #progress"
-                );
-                if (progressBar && progressBar.style.width) {
-                    const percent = parseInt(progressBar.style.width, 10);
-                    if (!isNaN(percent) && percent > 90) {
-                        nuke(container, "WATCHED", `[${percent}%] ${title}`);
-                        return;
-                    }
+                const percent = getWatchedPercent(container);
+                if (percent !== null && percent > 90) {
+                    nuke(container, "WATCHED", `[${percent}%] ${title}`);
+                    return;
                 }
             }
 
@@ -901,6 +986,25 @@
                         return;
                     }
                 }
+            }
+        });
+    }
+
+    // ======================== THEMATIC INTELLIGENCE ========================
+    // Interface to the background service worker. Fire-and-forget during the
+    // diagnostic phase — the resolved value is not yet used by the filter pipeline.
+    function classifyTitle(title) {
+        return new Promise(resolve => {
+            const t = setTimeout(() => resolve(null), 500);
+            try {
+                chrome.runtime.sendMessage({ type: "CLASSIFY_TITLE", title }, response => {
+                    clearTimeout(t);
+                    if (chrome.runtime.lastError) { resolve(null); return; }
+                    resolve(response ?? null);
+                });
+            } catch (e) {
+                clearTimeout(t);
+                resolve(null);
             }
         });
     }
@@ -1233,7 +1337,7 @@
         if (observer) observer.disconnect();
         currentBrowseTarget = target;
         observer = new MutationObserver(schedulePage);
-        observer.observe(target, { childList: true, subtree: true });
+        observer.observe(target, { childList: true, subtree: true, attributes: true, attributeFilter: ["src"] });
         return true;
     }
 
@@ -1295,6 +1399,7 @@
 
         window.addEventListener("yt-navigate-finish", () => {
             sessionId++;
+            seenChannels.clear();
             console.log(`[YT-PURGE] yt-navigate-finish: sessionId now ${sessionId}`);
             if (!filteringActive()) {
                 booted  = false;
@@ -1326,6 +1431,37 @@
         };
         waitForBody();
     }
+
+    // ======================== DIAGNOSTICS ========================
+    window.ytDiag = {
+        audit() {
+            const titles = document.querySelectorAll("h3");
+            console.group("[AUDIT] Container state");
+            titles.forEach(h3 => {
+                const title = h3.textContent?.trim();
+                if (!title || title.length < 3) return;
+                const container = findVideoContainerFromElement(h3);
+                if (!container || NON_VIDEO_CONTAINERS.has(container.tagName)) return;
+                const nuked    = container.dataset.ytPurgeNuked    ? "NUKED" : "LIVE ";
+                const dupeDone = container.dataset.ytPurgeDupeDone ? "yes" : "no ";
+                const display  = container.style.display || "(unset)";
+                const channel  = getChannelName(container) || "?";
+                const watched  = getWatchedPercent(container);
+                const stamp    = container.dataset.ytPurgeProcessed || "none";
+                console.log(
+                    `[${nuked}]`,
+                    `display:"${display}"`,
+                    `dupe-done:${dupeDone}`,
+                    `watched:${watched !== null ? watched + "%" : "—"}`,
+                    `ch:"${channel}"`,
+                    `stamp:${stamp.split(":")[0] ?? "—"}`,
+                    `"${title.slice(0, 50)}"`
+                );
+            });
+            console.groupEnd();
+            console.log(`[AUDIT] seenChannels (${seenChannels.size}):`, [...seenChannels].join(", ") || "(empty)");
+        },
+    };
 
     init();
 })();
