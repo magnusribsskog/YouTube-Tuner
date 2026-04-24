@@ -95,18 +95,48 @@ finalised after at least one week of observation on a clean account. Sub-labels
 are added where the observed data shows a tier 1 bucket is too broad to be
 useful.
 
-The taxonomy is fixed at build time and stable across versions. Changing a label
-definition requires reclassifying the full corpus. Changes are made deliberately
-and infrequently.
+The taxonomy is explicitly unstable at this stage. The label sets below are a
+starting hypothesis. `other` on both axes is the most important label in the
+system — every title that lands there is evidence of a gap in the taxonomy.
+Revision is expected and should be driven by what accumulates in `other` during
+diagnostic observation, not by intuition.
 
-Density throttling can operate at either tier:
-- Tier 1 catches broad thematic saturation (too much `gaming`)
-- Tier 2 catches pattern repetition within a theme (too much `gaming/esports`)
+Changing an existing label definition requires reclassifying the full corpus.
+Adding a new label does not — uncategorised titles simply get classified against
+the extended set going forward.
 
-Thresholds at each tier are calibrated independently from observed data.
+Density throttling operates on both axes independently:
+- Theme catches content saturation (`gaming` flooding regardless of format)
+- Format catches packaging saturation (`reaction` flooding regardless of subject)
 
-*Draft tier 1 label list: deferred pending garden session and one week of
-diagnostic observation on a clean account.*
+Thresholds on each axis are calibrated independently from observed data.
+
+### Axis 1 — Theme (what the video is about)
+
+Neutral categories ensure the classifier always has a valid label for benign
+content. High-signal-noise categories are where flooding most commonly occurs.
+
+**Neutral:**
+`music_performance`, `standup_comedy`, `cooking`, `travel`, `history`,
+`science`, `animals`, `automotive`, `art_craft`, `sports_event`
+
+**High-signal-noise:**
+`politics`, `conspiracy`, `celebrity_gossip`, `drama_outrage`, `true_crime`,
+`financial_advice`, `crypto`, `real_estate`, `tech_news`, `gaming`, `movie_tv`,
+`health_fitness`, `climate_environment`, `war_conflict`, `ai_ml`, `self_help`
+
+**Catch-all:**
+`other` — titles that do not fit any theme label; primary signal for taxonomy gaps
+
+### Axis 2 — Format (how the video is packaged)
+
+`reaction`, `tutorial`, `review`, `highlight_clip`, `vlog`, `unboxing`,
+`prank`, `challenge`, `live_performance`, `documentary`, `news_summary`,
+`podcast_clip`, `longform_interview`, `trailer`, `recap`, `analysis_essay`,
+`compilation`, `speedpaint`, `asmr`
+
+**Catch-all:**
+`other` — formats that do not fit any label; primary signal for taxonomy gaps
 
 ---
 
@@ -121,9 +151,9 @@ contributing sessions. It is the primary commercial asset of the hosted service.
 {
   "version": "2026-04-24T00:00:00Z",
   "entries": {
-    "louis ck garden": ["comedy"],
-    "gilfoyle hillarios silicon valley": ["comedy"],
-    "home renovation bathroom tile": ["diy"],
+    "louis ck garden": ["standup_comedy"],
+    "gilfoyle hillarios silicon valley": ["standup_comedy"],
+    "home renovation bathroom tile": ["art_craft"],
     ...
   }
 }
