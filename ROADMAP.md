@@ -414,6 +414,42 @@ These are not numbered releases. They represent a different class of work —
 architectural directions that require their own design phase before any
 implementation begins.
 
+### Self-healing blind spot — internal card selectors
+
+The v3.9 self-healing architecture covers container tag renames. It does not
+cover selectors that reach *inside* the card for filter-specific data.
+
+**Confirmed failure (2026-04-25):** YouTube migrated homepage cards from the
+legacy element structure to `yt-lockup-view-model`. The channel name moved out
+of `ytd-channel-name` into `yt-content-metadata-view-model a[href^="/@"]`.
+DUPE went silent across all builds (Firefox 3.7–3.9, Chrome extension) with
+no CRIT, no anchor search, no evidence trail — just silence.
+
+**The repair is fragile.** The new selector `yt-content-metadata-view-model
+a[href^="/@"]` is correct today. It will break again the next time YouTube
+refactors the lockup structure. The fix was found by DOM capture analysis,
+not by the system itself.
+
+**What makes container healing possible but internal healing hard:**
+Container renames leave beacons — nuked titles stay in the DOM and can be
+searched. Internal selector failures produce no evidence. A broken channel
+name selector looks identical to "no duplicates in this batch."
+
+**What robust internal healing would require:**
+- A known-good reference point inside the card (e.g. a watched video whose
+  title is confirmed in the nuke log) to walk down from and discover the
+  current progress bar path
+- For channel names: a channel the user has visited recently whose name is
+  known, used as a beacon to find the element that contains it
+- Both require building a separate beacon corpus for internal selectors,
+  distinct from the container-level nuke log
+
+This is tractable but not trivial. Until it is built, internal selector
+failures must be caught by the diagnostic infrastructure (HUD WARN on
+getChannelName failure, ytDiag.audit() for manual inspection) and repaired
+by DOM capture analysis as above. The LLM-assisted last-resort path below
+is the long-term answer.
+
 ### LLM-assisted last-resort self-healing
 - Triggered when in-page self-healing (v3.9) fails completely: CRIT persists
   after anchor search exhausts its candidates
