@@ -755,6 +755,7 @@
 
     // ======================== WATCHED PERCENT ========================
     function getWatchedPercent(container) {
+        // Tier 1: known selector, light DOM
         let progressBar = container.querySelector(
             "ytd-thumbnail-overlay-resume-playback-renderer #progress"
         );
@@ -764,24 +765,45 @@
             console.log(`[DIAG][WATCHED] light-DOM → ${pct}%`);
             return isNaN(pct) ? null : pct;
         }
+
+        // Tier 2: shadow DOM on the overlay renderer
         const renderer = container.querySelector("ytd-thumbnail-overlay-resume-playback-renderer");
-        if (!renderer) return null;
-        if (!renderer.shadowRoot) {
-            console.log("[DIAG][WATCHED] renderer present, no shadowRoot");
-            return null;
+        if (renderer) {
+            if (!renderer.shadowRoot) {
+                console.log("[DIAG][WATCHED] renderer present, no shadowRoot");
+            } else {
+                progressBar = renderer.shadowRoot.querySelector("#progress");
+                if (!progressBar) {
+                    console.log("[DIAG][WATCHED] shadow-DOM: renderer found, #progress absent");
+                } else if (!progressBar.style.width) {
+                    console.log("[DIAG][WATCHED] shadow-DOM: #progress found, width not set");
+                } else {
+                    const pct = parseInt(progressBar.style.width, 10);
+                    console.log(`[DIAG][WATCHED] shadow-DOM → ${pct}%`);
+                    return isNaN(pct) ? null : pct;
+                }
+            }
         }
-        progressBar = renderer.shadowRoot.querySelector("#progress");
-        if (!progressBar) {
-            console.log("[DIAG][WATCHED] shadow-DOM: renderer found, #progress absent");
-            return null;
+
+        // Tier 3: structural fallback — search thumbnail subtree for any
+        // percentage-width element whose id or class contains "progress".
+        // Constrained to ytd-thumbnail to avoid false positives from text content.
+        const thumbnail = container.querySelector("ytd-thumbnail");
+        if (thumbnail) {
+            const candidates = thumbnail.querySelectorAll('[style*="width"]');
+            for (const el of candidates) {
+                const id  = el.id?.toLowerCase() || "";
+                const cls = typeof el.className === "string" ? el.className.toLowerCase() : "";
+                if (!id.includes("progress") && !cls.includes("progress")) continue;
+                const pct = parseInt(el.style.width, 10);
+                if (!isNaN(pct) && pct > 0) {
+                    console.log(`[DIAG][WATCHED] structural fallback → ${pct}% on #${el.id || "(no-id)"} .${el.className || "(no-class)"}`);
+                    return pct;
+                }
+            }
         }
-        if (!progressBar.style.width) {
-            console.log("[DIAG][WATCHED] shadow-DOM: #progress found, width not set");
-            return null;
-        }
-        const pct = parseInt(progressBar.style.width, 10);
-        console.log(`[DIAG][WATCHED] shadow-DOM → ${pct}%`);
-        return isNaN(pct) ? null : pct;
+
+        return null;
     }
 
     // ======================== HYDRATION GATE ========================
