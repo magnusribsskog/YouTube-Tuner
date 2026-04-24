@@ -704,6 +704,7 @@
 
     // ======================== CHANNEL NAME EXTRACTION ========================
     const CHANNEL_SELECTORS = [
+        "yt-content-metadata-view-model a[href^='/@']", // lockup card format (current)
         "ytd-channel-name #text",
         "#channel-name #text",
         "#channel-name",
