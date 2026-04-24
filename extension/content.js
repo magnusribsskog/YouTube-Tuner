@@ -853,6 +853,8 @@
             container.dataset.ytPurgeProcessed = `${sessionId}:${title}`;
             console.log(`[DIAG] container: <${container.tagName.toLowerCase()}> — "${title}"`);
 
+            classifyTitle(title);
+
             if (heuristics.DUPE.enabled) {
                 const channelName = getChannelName(container);
                 if (channelName) {
@@ -901,6 +903,25 @@
                         return;
                     }
                 }
+            }
+        });
+    }
+
+    // ======================== THEMATIC INTELLIGENCE ========================
+    // Interface to the background service worker. Fire-and-forget during the
+    // diagnostic phase — the resolved value is not yet used by the filter pipeline.
+    function classifyTitle(title) {
+        return new Promise(resolve => {
+            const t = setTimeout(() => resolve(null), 500);
+            try {
+                chrome.runtime.sendMessage({ type: "CLASSIFY_TITLE", title }, response => {
+                    clearTimeout(t);
+                    if (chrome.runtime.lastError) { resolve(null); return; }
+                    resolve(response ?? null);
+                });
+            } catch (e) {
+                clearTimeout(t);
+                resolve(null);
             }
         });
     }
