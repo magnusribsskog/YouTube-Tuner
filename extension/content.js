@@ -753,6 +753,37 @@
         return null;
     }
 
+    // ======================== WATCHED PERCENT ========================
+    function getWatchedPercent(container) {
+        let progressBar = container.querySelector(
+            "ytd-thumbnail-overlay-resume-playback-renderer #progress"
+        );
+        if (progressBar) {
+            if (!progressBar.style.width) return null;
+            const pct = parseInt(progressBar.style.width, 10);
+            console.log(`[DIAG][WATCHED] light-DOM → ${pct}%`);
+            return isNaN(pct) ? null : pct;
+        }
+        const renderer = container.querySelector("ytd-thumbnail-overlay-resume-playback-renderer");
+        if (!renderer) return null;
+        if (!renderer.shadowRoot) {
+            console.log("[DIAG][WATCHED] renderer present, no shadowRoot");
+            return null;
+        }
+        progressBar = renderer.shadowRoot.querySelector("#progress");
+        if (!progressBar) {
+            console.log("[DIAG][WATCHED] shadow-DOM: renderer found, #progress absent");
+            return null;
+        }
+        if (!progressBar.style.width) {
+            console.log("[DIAG][WATCHED] shadow-DOM: #progress found, width not set");
+            return null;
+        }
+        const pct = parseInt(progressBar.style.width, 10);
+        console.log(`[DIAG][WATCHED] shadow-DOM → ${pct}%`);
+        return isNaN(pct) ? null : pct;
+    }
+
     // ======================== HYDRATION GATE ========================
     const containerCreatedAt = new WeakMap();
 
@@ -777,6 +808,18 @@
         }
     }
 
+    // ======================== UNHIDE WATCHER ========================
+    function watchForUnhide(container, label) {
+        const watcher = new MutationObserver(() => {
+            const d = container.style.display;
+            if (d !== "none") {
+                console.warn(`[DIAG][UNHIDE] display restored to "${d || "empty"}" — "${label}"`);
+                logToHUD("WARN", `[UNHIDE] ${label}`);
+            }
+        });
+        watcher.observe(container, { attributes: true, attributeFilter: ["style"] });
+    }
+
     // ======================== NUKE HELPER ========================
     function nuke(container, reason, label) {
         const isFirstNuke = !container.dataset.ytPurgeNuked;
@@ -789,12 +832,14 @@
             }
             logToHUD(reason, label);
             recordNuke(reason, label);
+            watchForUnhide(container, label);
         }
         container.style.setProperty("display", "none", "important");
     }
 
     // ======================== PROCESSING ========================
     let scanCount = 0;
+    let seenChannels = new Set(); // session-level channel tracking; cleared on yt-navigate-finish
 
     function processPage() {
         const ctx = getPageContext();
@@ -825,8 +870,6 @@
             return;
         }
 
-        const channelSeen = new Map();
-
         titles.forEach(h3 => {
             const title = h3.textContent?.trim();
             if (!title || title.length < 3) return;
@@ -839,7 +882,29 @@
                 return;
             }
 
-            if (container.dataset.ytPurgeProcessed === `${sessionId}:${title}`) return;
+            if (container.dataset.ytPurgeProcessed === `${sessionId}:${title}`) {
+                if (!container.dataset.ytPurgeNuked) {
+                    if (heuristics.WATCHED.enabled) {
+                        const percent = getWatchedPercent(container);
+                        if (percent !== null && percent > 90) {
+                            nuke(container, "WATCHED", `[${percent}%] ${title}`);
+                            return;
+                        }
+                    }
+                    if (!container.dataset.ytPurgeDupeDone && heuristics.DUPE.enabled) {
+                        const channelName = getChannelName(container);
+                        if (channelName) {
+                            container.dataset.ytPurgeDupeDone = "1";
+                            if (seenChannels.has(channelName)) {
+                                nuke(container, "DUPE", `${channelName} — ${title}`);
+                                return;
+                            }
+                            seenChannels.add(channelName);
+                        }
+                    }
+                }
+                return;
+            }
 
             if (!isContainerLive(container, title)) {
                 container.dataset.ytPurgePending = "1";
@@ -858,25 +923,20 @@
             if (heuristics.DUPE.enabled) {
                 const channelName = getChannelName(container);
                 if (channelName) {
-                    const count = (channelSeen.get(channelName) || 0) + 1;
-                    channelSeen.set(channelName, count);
-                    if (count > 1) {
+                    container.dataset.ytPurgeDupeDone = "1";
+                    if (seenChannels.has(channelName)) {
                         nuke(container, "DUPE", `${channelName} — ${title}`);
                         return;
                     }
+                    seenChannels.add(channelName);
                 }
             }
 
             if (heuristics.WATCHED.enabled) {
-                const progressBar = container.querySelector(
-                    "ytd-thumbnail-overlay-resume-playback-renderer #progress"
-                );
-                if (progressBar && progressBar.style.width) {
-                    const percent = parseInt(progressBar.style.width, 10);
-                    if (!isNaN(percent) && percent > 90) {
-                        nuke(container, "WATCHED", `[${percent}%] ${title}`);
-                        return;
-                    }
+                const percent = getWatchedPercent(container);
+                if (percent !== null && percent > 90) {
+                    nuke(container, "WATCHED", `[${percent}%] ${title}`);
+                    return;
                 }
             }
 
@@ -1254,7 +1314,7 @@
         if (observer) observer.disconnect();
         currentBrowseTarget = target;
         observer = new MutationObserver(schedulePage);
-        observer.observe(target, { childList: true, subtree: true });
+        observer.observe(target, { childList: true, subtree: true, attributes: true, attributeFilter: ["src"] });
         return true;
     }
 
@@ -1316,6 +1376,7 @@
 
         window.addEventListener("yt-navigate-finish", () => {
             sessionId++;
+            seenChannels.clear();
             console.log(`[YT-PURGE] yt-navigate-finish: sessionId now ${sessionId}`);
             if (!filteringActive()) {
                 booted  = false;
@@ -1347,6 +1408,37 @@
         };
         waitForBody();
     }
+
+    // ======================== DIAGNOSTICS ========================
+    window.ytDiag = {
+        audit() {
+            const titles = document.querySelectorAll("h3");
+            console.group("[AUDIT] Container state");
+            titles.forEach(h3 => {
+                const title = h3.textContent?.trim();
+                if (!title || title.length < 3) return;
+                const container = findVideoContainerFromElement(h3);
+                if (!container || NON_VIDEO_CONTAINERS.has(container.tagName)) return;
+                const nuked    = container.dataset.ytPurgeNuked    ? "NUKED" : "LIVE ";
+                const dupeDone = container.dataset.ytPurgeDupeDone ? "yes" : "no ";
+                const display  = container.style.display || "(unset)";
+                const channel  = getChannelName(container) || "?";
+                const watched  = getWatchedPercent(container);
+                const stamp    = container.dataset.ytPurgeProcessed || "none";
+                console.log(
+                    `[${nuked}]`,
+                    `display:"${display}"`,
+                    `dupe-done:${dupeDone}`,
+                    `watched:${watched !== null ? watched + "%" : "—"}`,
+                    `ch:"${channel}"`,
+                    `stamp:${stamp.split(":")[0] ?? "—"}`,
+                    `"${title.slice(0, 50)}"`
+                );
+            });
+            console.groupEnd();
+            console.log(`[AUDIT] seenChannels (${seenChannels.size}):`, [...seenChannels].join(", ") || "(empty)");
+        },
+    };
 
     init();
 })();

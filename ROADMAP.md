@@ -39,6 +39,17 @@ gracefully. The goal over time is to reduce reliance on static regex and manual
 phrase lists by replacing them with LLM-derived rules that the user never has
 to write themselves.
 
+**Filtered elements must not be removed from the DOM before their telemetry lifecycle completes.**
+The prohibition on "opacity theatre" was written against fake engagement — making
+YouTube believe a user saw and considered content they never encountered. That
+prohibition stands. But it was misapplied: using `display: none` to remove a
+shell element before YouTube's IntersectionObserver has fired produces the
+opposite problem — a telemetry black hole, not theatre. A user scrolling past a
+video they choose not to click generates exactly this signal: impression beacon
+fires, no engagement event follows. That is the honest signal. Filtered elements
+must be visually collapsed, not DOM-removed, until their hydration lifecycle and
+telemetry dispatch are complete.
+
 ---
 
 ## Released
@@ -192,11 +203,53 @@ waitForPrimaryTarget polling chain, SPA re-attachment on renderer change only.
 - Confirmed stable: self-healing proven in field; boots correctly from
   channel page → Home SPA navigation entry point
 
+### v3.9 extension build — Diagnostic session (2026-04-24)
+
+**Finding: WATCHED and DUPE selectors broken — YouTube DOM change**
+Both filters are silent across all legacy versions (3.7, 3.8, 3.9 Firefox)
+and the current Chrome extension build. Confirmed pre-existing: regression
+analysis shows the failure exists in legacy code before any extension work.
+Root cause: YouTube changed their DOM structure for the watched-video progress
+bar and/or channel name elements. Selectors hardcoded since v3.7.
+
+Selectors to verify against live DOM tomorrow:
+- WATCHED: `ytd-thumbnail-overlay-resume-playback-renderer #progress`
+- DUPE: `ytd-channel-name #text`, `#channel-name #text`, `#channel-name`, etc.
+
+**Diagnostic infrastructure added (to be stripped or gated before publication):**
+- `watchForUnhide()` — MutationObserver on each nuked container watching
+  `style` attribute; fires [WARN][UNHIDE] to HUD if YouTube restores display
+- `getWatchedPercent()` — replaces inline progress bar query; adds shadow DOM
+  piercing via `renderer.shadowRoot.querySelector("#progress")`; traces source
+  (light-DOM / shadow-DOM / no-renderer) to console per evaluation
+- `window.ytDiag.audit()` — callable from DevTools console; prints one row per
+  video card: nuke status, display style, dupe-done stamp, watched %, channel
+  name, session stamp prefix. Identifies culprits directly without guessing.
+- `attributeFilter: ["src"]` added to MutationObserver — fires schedulePage
+  when thumbnail src attributes change, reducing pending-container delay
+
+**Architectural finding: self-healing blind spot**
+Self-healing (v3.9) covers container tag renames — the skeleton of the card.
+It does not cover internal selectors: WATCHED and DUPE break silently when
+YouTube moves their target elements, producing no evidence trail and no
+recovery path. Container renames leave beacons (nuked titles still in DOM);
+internal selector failures produce silence.
+
+This is the exact failure mode self-healing was designed to prevent, now
+confirmed for a class of selectors outside its scope. Open question: can the
+self-healing model be extended inward? No solution yet. See notes.org.
+
+**DUPE architecture change:**
+- Per-scan `channelSeen` Map replaced with session-level `seenChannels` Set
+- Cleared on `yt-navigate-finish` alongside sessionId
+- Deferred re-check: stamped containers without `ytPurgeDupeDone` retried on
+  subsequent scans until channel name resolves
+
 ---
 
 ## Planned
 
-### Pre-publication gate — Engagement signal consultation (blocking)
+### Pre-publication gate — Lifecycle integrity (blocking)
 
 **This gate must be cleared before the extension is recommended to any user
 other than the developer. It is not a feature. It is the precondition for
@@ -205,23 +258,60 @@ responsible publication.**
 We have direct evidence that aggressive filtering produces a "signal vacuum" —
 the YouTube backend sees continuation token requests with no corresponding
 impression or click events, and responds by throttling features (confirmed:
-infinite scroll removal on developer account). The safe filtering threshold is
-not known precisely. Publishing without establishing it risks damaging other
-users' accounts silently.
+infinite scroll removal on developer account).
+
+**Finding from Gemini Pro consultation (2026-04-23 — see docs/CONSULTATIONS.md):**
+The consultation confirmed that YouTube's anomaly detection is driven by dynamic
+ML models rather than hardcoded thresholds. The safe filtering range is therefore
+not a fixed number — it is account-contextual and session-contextual, and best
+understood through observation rather than specification.
+
+We already have one confirmed data point: aggressive filtering produced infinite
+scroll removal on the developer account. That is the ceiling being enforced in
+practice. What we do not yet know: where the boundary sits under normal
+conditions, what triggers it precisely, and what conditions cause throttled
+features to be reinstated. Both the upper and lower bounds are open questions.
+
+The lifecycle integrity fix (collapse instead of DOM removal) is the necessary
+precondition for any meaningful measurement — until telemetry is flowing
+correctly, any throttling we observe is confounded by broken signals. Once the
+collapse is in place, we can observe with a clean instrument.
+
+The root cause of the current confirmed throttling is a lifecycle integrity
+failure, not volume alone.
+
+YouTube's video card lifecycle:
+1. Shell allocated in DOM — skeleton element, no content
+2. IntersectionObserver attached to the shell (with rootMargin — fires before
+   the element enters the visible viewport)
+3. Shell enters observer threshold → hydration triggered: thumbnail fetched,
+   title parsed, inner DOM built
+4. Hydrated element enters actual viewport → telemetry beacon dispatched
+5. Engagement events (click, hover) propagate if the user interacts
+
+Current `nuke()` fires after step 3 (hydration gate confirms thumbnail present),
+then calls `display: none`. This removes the container from layout. An element
+with no layout dimensions cannot intersect an IntersectionObserver — step 4
+never fires. The backend dispatched 20 cards, expects 20 impression beacons,
+receives zero, and sees the next continuation request arrive immediately.
+This is the exact fingerprint of a headless scraper.
+
+The scroll velocity dimension is a compounding factor: a heavily filtered page
+empties quickly, triggering continuation requests faster than human reading
+speed — even if impression volume were otherwise normal.
 
 Required steps, in order:
 
-1. **Gemini Pro consultation on filter ceiling** — query Pro with the specific
-   architecture: per-batch ceiling, confidence-scored candidate prioritisation,
-   honest impressions (no opacity theatre, no fake engagement). Request their
-   assessment of what ceiling percentage keeps the engagement ratio within a
-   range YouTube's systems treat as human. Retain the full session transcript
-   as a due diligence artifact.
+1. **Lifecycle-respecting collapse** — replace `display: none` in `nuke()` with
+   a visual collapse that maintains a nominal layout footprint: the container
+   stays in the document, IntersectionObserver fires, telemetry dispatches, the
+   user sees nothing meaningful. `display: none` is explicitly prohibited as a
+   filter mechanism. Implementation detail in v4.0 amendment below.
 
-2. **Filter ceiling implementation** — per-batch cap, candidates ranked by
-   heuristic confidence score, weakest matches pass through. The ceiling number
-   is informed by the Pro consultation, not assumed. HUD shows ceiling
-   activations so the user knows when it is constraining the filter.
+2. **Scroll velocity review** — assess whether heavily filtered sessions reach
+   continuation trigger speeds outside human range; if so, determine whether
+   the collapse approach resolves this naturally (collapsed elements still
+   occupy scroll space) or whether additional throttling is needed.
 
 3. **Publication path** — icons (16×16, 48×48, 128×128), privacy disclosure
    (all data local, nothing transmitted), Chrome Web Store submission. Firefox
@@ -239,6 +329,43 @@ Required steps, in order:
 - Implement adaptive retry: if container stays pending >2 seconds,
   force-evaluate with whatever title exists (prevents permanent hang)
 - Consider 50ms debounce when multiple containers added in rapid succession
+
+### v4.0 amendment — Lifecycle-respecting collapse (publication blocker)
+
+The `nuke()` function currently calls:
+```js
+container.style.setProperty("display", "none", "important");
+```
+This must be replaced before publication. `display: none` removes the element
+from layout — it has no dimensions, so the browser cannot intersect it against
+an IntersectionObserver threshold. YouTube's hydration trigger and telemetry
+beacon both depend on this intersection. Setting `display: none` before the
+element scrolls into view produces a telemetry black hole for every filtered
+card in that batch.
+
+Required replacement: visually collapse the container while keeping it in the
+document and in layout flow. The collapsed element must retain enough height for
+IntersectionObserver to fire as the user scrolls past it.
+
+Candidate approaches (to be validated against YouTube's observer rootMargin):
+- `visibility: hidden` — element invisible, layout fully preserved; IO fires normally
+- `height: 1px; overflow: hidden; min-height: 0` — collapses visual space, IO fires
+- Stripping inner HTML and collapsing height — leaves shell in flow, IO fires
+
+`display: none` and `opacity: 0` with `pointer-events: none` are not equivalent
+substitutes: `display: none` removes from layout entirely; `opacity: 0` alone
+preserves layout but leaves the element interactive. The correct approach
+depends on what YouTube's observer rootMargin is set to — a 1px footprint may
+be sufficient, or the element may need to match the original card height to
+guarantee intersection before the user has scrolled past.
+
+The collapsed element should have `pointer-events: none` applied regardless of
+the height strategy, so it does not intercept user scroll or click events.
+
+Scroll velocity note: collapsed elements still occupy vertical space in the feed.
+This naturally slows the rate at which a user reaches the continuation trigger
+on a heavily filtered page — the problem may resolve without explicit throttling.
+Observe in practice before adding artificial delays.
 
 ### v4.0 — Extension stabilisation (in progress)
 - Chrome extension prototype running: manifest, content script, storage layer ported
