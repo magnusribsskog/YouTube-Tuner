@@ -260,6 +260,73 @@
         await saveNukeLog(updated);
     }
 
+    // ── Metrics: rolling per-session filter ratios ────────────────────────────
+    //
+    // One record per navigation session, upserted to chrome.storage.local every
+    // FLUSH_N cards and on yt-navigate-finish. Capped at MAX sessions; oldest
+    // rotated out. Confidence and drift are computed at read time — not stored.
+    //
+    // Schema v1: { v, id, t0, t1, cards, nuked, counts: { PHRASE, SLOP, CAPS, DUPE, WATCHED } }
+    //   t0  — session start timestamp (ms)
+    //   t1  — last upsert timestamp; gap between t0/t1 relative to cards detects stale tabs
+    //   cards — total cards evaluated (stamped ytPurgeProcessed) this session
+    //   nuked — total cards hidden this session
+    //   counts — per-heuristic nuke counts; ratio to nuked gives composition,
+    //            ratio to cards gives absolute filtering rate
+    const MetricsService = (() => {
+        const KEY     = "yt-purge-metrics";
+        const MAX     = 30;
+        const FLUSH_N = 10;
+
+        function newSession() {
+            return {
+                v:      1,
+                id:     `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+                t0:     Date.now(),
+                t1:     Date.now(),
+                cards:  0,
+                nuked:  0,
+                counts: { PHRASE: 0, SLOP: 0, CAPS: 0, DUPE: 0, WATCHED: 0 },
+            };
+        }
+
+        let session = newSession();
+
+        async function flush() {
+            session.t1 = Date.now();
+            try {
+                const raw      = await Storage.get(KEY);
+                const sessions = Array.isArray(raw) ? raw : [];
+                const idx      = sessions.findIndex(s => s.id === session.id);
+                if (idx >= 0) {
+                    sessions[idx] = session;
+                } else {
+                    sessions.push(session);
+                    if (sessions.length > MAX) sessions.splice(0, sessions.length - MAX);
+                }
+                await Storage.set(KEY, sessions);
+            } catch (e) {
+                console.warn("[YT-PURGE] Metrics flush failed:", e.message);
+            }
+        }
+
+        return {
+            recordCard() {
+                session.cards++;
+                if (session.cards % FLUSH_N === 0) flush();
+            },
+            recordNuke(reason) {
+                if (!(reason in session.counts)) return;
+                session.counts[reason]++;
+                session.nuked++;
+            },
+            async rotateSession() {
+                await flush();
+                session = newSession();
+            },
+        };
+    })();
+
     function matchesCustomPhrase(title) {
         const lower = title.toLowerCase();
         return customPhrases.some(p => lower.includes(p));
@@ -853,6 +920,7 @@
                 h.count++;
                 if (h.countEl) h.countEl.textContent = `caught: ${h.count}`;
             }
+            MetricsService.recordNuke(reason);
             logToHUD(reason, label);
             recordNuke(reason, label);
             watchForUnhide(container, label);
@@ -939,6 +1007,7 @@
             delete container.dataset.ytPurgePending;
 
             container.dataset.ytPurgeProcessed = `${sessionId}:${title}`;
+            MetricsService.recordCard();
             console.log(`[DIAG] container: <${container.tagName.toLowerCase()}> — "${title}"`);
 
             classifyTitle(title);
@@ -1398,6 +1467,7 @@
         customPhrases = await loadPhrases();
 
         window.addEventListener("yt-navigate-finish", () => {
+            MetricsService.rotateSession();
             sessionId++;
             seenChannels.clear();
             console.log(`[YT-PURGE] yt-navigate-finish: sessionId now ${sessionId}`);
