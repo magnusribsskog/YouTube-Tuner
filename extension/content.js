@@ -266,7 +266,10 @@
     // FLUSH_N cards and on yt-navigate-finish. Capped at MAX sessions; oldest
     // rotated out. Confidence and drift are computed at read time — not stored.
     //
-    // Schema v1: { v, id, t0, t1, cards, nuked, counts: { PHRASE, SLOP, CAPS, DUPE, WATCHED } }
+    // Schema v1: { v, id, t0, t1, cards, nuked, scans, counts: { PHRASE, SLOP, CAPS, DUPE, WATCHED } }
+    //   scans — productive scans only (those that found new cards); cards/scans gives
+    //           average new cards per productive scan, a local proxy for batch size.
+    //           Downward drift signals throttling against this account's own baseline.
     //   t0  — session start timestamp (ms)
     //   t1  — last upsert timestamp; gap between t0/t1 relative to cards detects stale tabs
     //   cards — total cards evaluated (stamped ytPurgeProcessed) this session
@@ -286,6 +289,7 @@
                 t1:     Date.now(),
                 cards:  0,
                 nuked:  0,
+                scans:  0,
                 counts: { PHRASE: 0, SLOP: 0, CAPS: 0, DUPE: 0, WATCHED: 0 },
             };
         }
@@ -314,6 +318,9 @@
             recordCard() {
                 session.cards++;
                 if (session.cards % FLUSH_N === 0) flush();
+            },
+            recordScan() {
+                session.scans++;
             },
             recordNuke(reason) {
                 if (!(reason in session.counts)) return;
@@ -960,6 +967,8 @@
             console.log(`[DIAG] scan ${scanCount} — static DOM, nothing to evaluate`);
             return;
         }
+
+        MetricsService.recordScan();
 
         titles.forEach(h3 => {
             const title = h3.textContent?.trim();
