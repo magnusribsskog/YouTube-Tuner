@@ -39,6 +39,15 @@ gracefully. The goal over time is to reduce reliance on static regex and manual
 phrase lists by replacing them with LLM-derived rules that the user never has
 to write themselves.
 
+**Two build tiers exist and must remain distinct.**
+The public build (app stores) contains no automated navigation, no beacon
+recovery, and no actions that fire impressions or shape recommendation history
+without explicit user intent. The master build (Magnus and Claude only) permits
+full automation — beacon recovery, automated search navigation, all diagnostic
+and self-healing tooling. Any feature involving automated navigation or
+impression-firing without user intent is master-build only by default. Promoting
+such a feature to the public build requires an explicit, documented decision.
+
 **Filtered elements must not be removed from the DOM before their telemetry lifecycle completes.**
 The prohibition on "opacity theatre" was written against fake engagement — making
 YouTube believe a user saw and considered content they never encountered. That
@@ -245,9 +254,84 @@ self-healing model be extended inward? No solution yet. See notes.org.
 - Deferred re-check: stamped containers without `ytPurgeDupeDone` retried on
   subsequent scans until channel name resolves
 
+### Hardening phase addition — MetricsService (2026-04-26)
+
+Shipped during human use observation. Additive and non-invasive — does not
+touch filtering logic.
+
+**What it does:** records one session record per navigation session to
+`chrome.storage.local` under key `yt-purge-metrics`. Upserts every 10 cards
+evaluated and on `yt-navigate-finish`. Capped at 30 sessions; oldest rotated
+out automatically.
+
+**Schema v1:**
+```js
+{ v, id, t0, t1, cards, nuked, counts: { PHRASE, SLOP, CAPS, DUPE, WATCHED } }
+```
+- `t0` / `t1` — session start and last-upsert timestamps; gap relative to
+  `cards` detects stale open tabs
+- `cards` — total cards stamped `ytPurgeProcessed` this session
+- `nuked` — total cards hidden this session
+- `counts` — per-heuristic nuke counts; `counts.X / nuked` gives composition,
+  `counts.X / cards` gives absolute filtering rate
+
+**What it does not do:** drift detection, confidence computation, and HUD
+surface are not yet implemented. This is the data collection scaffolding only.
+Those are planned — see HUD ratio drift indicators below.
+
+**Confirmed working (2026-04-26):** four sessions observed in storage after
+first use. WATCHED sitting at zero across all sessions is consistent with
+account recovery — YouTube surfacing fewer re-watch candidates as the signal
+vacuum clears. Worth monitoring as the account normalises.
+
 ---
 
 ## Planned
+
+### Hardening phase — Human use observation (active, 2026-04-25)
+
+**No new features until this phase is complete.**
+
+Magnus uses YouTube as normally as possible for several days. Existing selectors
+(WATCHED, DUPE) observed under real conditions. Any breakage documented and
+fixed against main. Goal: a stable baseline before advancing the roadmap.
+
+If WATCHED or DUPE goes silent during this period, the recovery path is the
+reference video beacon — see Vision / Self-healing blind spot below.
+
+v4.1 (thematic intelligence) is explicitly paused until this phase completes.
+
+---
+
+### HUD ratio drift indicators — Read side of MetricsService
+
+**Depends on:** MetricsService (shipped), sufficient real-world sessions to
+establish a baseline. Do not implement until hardening phase produces enough
+data to reason about.
+
+**What this is not:** an alarm system. Drift indicators are posture signals —
+the HUD communicates that something looks unusual, not that something is broken.
+
+**Baseline:** rolling per-category ratios computed from the last N sessions
+with sufficient cards (threshold TBD from observed data). The baseline is
+account-contextual and learned — not hardcoded. Sessions with fewer than ~30
+cards are low-confidence and weighted accordingly. No baseline exists until
+enough sessions accumulate; silence during warm-up is honest.
+
+**Drift detection:** compare current session ratios against rolling baseline.
+Surface an indicator in the HUD when a category diverges beyond a tolerance
+band. The WATCHED metric is the primary signal — persistent zero output
+across sessions with sufficient cards is the trigger for beacon recovery.
+
+**Confidence display:** indicators carry their confidence level. "WATCHED has
+been dark for N sessions (moderate confidence)" is more useful than a bare
+alarm. Uncertainty is part of the information.
+
+**Implementation note:** reads from `yt-purge-metrics` in Storage. All
+computation happens at read time; nothing additional is written to storage.
+The MetricsService schema is designed to support this without modification.
+
+---
 
 ### Pre-publication gate — Lifecycle integrity (blocking)
 
@@ -375,7 +459,7 @@ Observe in practice before adding artificial delays.
 - Post-commit hook syncs extension/ to Windows filesystem automatically
 - Firefox support: web-ext build after Chrome is stable
 
-### v4.1 — Semantic heuristic pipeline
+### v4.1 — Semantic heuristic pipeline [PAUSED — resumes after hardening phase]
 - Density throttling: limit videos per semantic cluster per batch
   (generalisation of channel dedup, uses existing tokeniser, no LLM needed)
 - LLM cluster identification (optional external service): generates local
@@ -449,6 +533,42 @@ failures must be caught by the diagnostic infrastructure (HUD WARN on
 getChannelName failure, ytDiag.audit() for manual inspection) and repaired
 by DOM capture analysis as above. The LLM-assisted last-resort path below
 is the long-term answer.
+
+**Beacon recovery mechanism (formalized 2026-04-26):**
+
+The concrete recovery path for silent internal selector failures is
+content-addressed DOM discovery via a reference video.
+
+Trigger condition: a monitored internal metric (WATCHED, DUPE) produces zero
+output over a sufficient run of cards — silence indistinguishable from
+"no matched content in this session."
+
+Recovery path:
+1. HUD surfaces a metric-dark warning (N cards processed, zero WATCHED or
+   DUPE hits — anomalous given account history)
+2. Developer searches YouTube for the reference video: owned channel, unique
+   title, confirmed watched, public, boring, 3+ minutes
+3. Search returns exactly one result card — a DOM subtree with known content
+4. Walk that card to discover the current selector path for the affected
+   metric: progress bar element for WATCHED, channel name element for DUPE
+5. Commit the discovered selector as a correction; the observer self-heals
+   without reload
+
+Why this works: the reference video is an anchor with known content at a
+known depth in the card. Because we know what should be there — specific
+title, channel name, watched progress — we can locate those elements
+regardless of what YouTube's engineers called them or where they moved them.
+The selector name is irrelevant; the content is the handle.
+
+The title selector self-heals today because titles are legible text — the
+system can anchor semantically. WATCHED and DUPE are pure CSS structure with
+no semantic handle. The reference video gives them the same anchor that text
+gives the title selector. Same principle, different mechanism.
+
+Build tier: master build only. The automated search navigation fires impressions
+and shapes recommendation history without user intent — it is gated by design,
+not disabled. It may run fully automatically in the master build. It must not
+appear in the public build under any condition.
 
 ### LLM-assisted last-resort self-healing
 - Triggered when in-page self-healing (v3.9) fails completely: CRIT persists
