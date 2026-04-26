@@ -328,7 +328,7 @@
                 session.nuked++;
             },
             async rotateSession() {
-                await flush();
+                if (session.cards > 0) await flush();
                 session = newSession();
             },
         };
