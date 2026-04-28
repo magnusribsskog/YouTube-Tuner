@@ -333,6 +333,35 @@ The MetricsService schema is designed to support this without modification.
 
 ---
 
+### Passive algorithmic signal mining
+
+**Depends on:** HUD drift indicators (infrastructure to consume new signals).
+**Precondition for:** v4.1 — thematic intelligence requires feedback to be meaningful.
+
+Two signals, both passive and non-destructive. Observable from the DOM without
+any interaction, navigation, or API access. Neither fires any event or shapes
+any YouTube-side state.
+
+**Autoplay target tracking:** YouTube's autoplay queue is the algorithm's
+unmediated statement of intent — what it believes should follow, without any
+user input. Readable from the player. Recorded per session. The most direct
+signal of algorithmic position available without API access. A session where
+autoplay consistently targets filtered categories is a session where the
+algorithm has not absorbed the filtering signal.
+
+**Re-appearance rate:** same channel or video surfacing more than once per
+session. Extends DUPE from a defensive filter into a diagnostic. Repeated
+surfacing after non-engagement is the algorithm's counter-move — it disagrees
+with the filter's assessment and is pushing back. Tracked per-session by
+channel. A rising re-appearance rate for a filtered category indicates
+algorithmic insistence, not a filter failure. Distinguishes "the filter is
+working" from "the filter is working and the algorithm is fighting it."
+
+Schema extension to MetricsService or companion storage key — to be decided
+at implementation time based on what the existing schema can accommodate.
+
+---
+
 ### Pre-publication gate — Lifecycle integrity (blocking)
 
 **This gate must be cleared before the extension is recommended to any user
@@ -459,7 +488,22 @@ Observe in practice before adding artificial delays.
 - Post-commit hook syncs extension/ to Windows filesystem automatically
 - Firefox support: web-ext build after Chrome is stable
 
-### v4.1 — Semantic heuristic pipeline [PAUSED — resumes after hardening phase]
+### v4.1 — Semantic heuristic pipeline [PAUSED]
+
+**Depends on:** all of the following must be complete before implementation begins:
+1. Hardening phase complete
+2. Pre-publication gate cleared — lifecycle-respecting collapse in place
+3. Autoplay target tracking implemented and producing data
+4. Re-appearance rate tracking implemented and producing data
+
+The third and fourth items are not bureaucratic gates. Thematic intelligence
+without feedback is just tighter filtering by a different name. The passive
+signal expansion gives v4.1 something to calibrate against — cluster density
+throttling informed by how the algorithm is actually responding is a
+categorically different thing from cluster density throttling in the dark.
+This is why v4.1 was always the right direction and also why it was right
+to pause it: it needs to see the board before it can play.
+
 - Density throttling: limit videos per semantic cluster per batch
   (generalisation of channel dedup, uses existing tokeniser, no LLM needed)
 - LLM cluster identification (optional external service): generates local
