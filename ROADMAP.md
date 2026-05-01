@@ -430,6 +430,24 @@ Required steps, in order:
    (all data local, nothing transmitted), Chrome Web Store submission. Firefox
    support follows once Chrome build is stable.
 
+
+### Remote throttle system — Single-use signal infrastructure
+
+**Depends on:** Azure endpoint (new dependency), publication path finalized.
+**Required before:** any user beyond the developer receives the extension.
+
+Standard telemetry is noisy by construction — heartbeats and polls produce false positives and can be gamed. The signal infrastructure here is designed to be clean by construction.
+
+**Architecture:** each user is provisioned with two one-time-use GUIDs ("bullets") registered against an Azure ledger at install time. Each GUID can be transmitted to the endpoint exactly once; the server rejects subsequent attempts. The ledger tracks three states: unspent, spent-legitimate, spent-wolf.
+
+**Two bullet flavors:**
+- **Automatic** — fired by the extension on a measurable anomaly: metric-dark warning persisting across sessions, continuation throttling detected, feature removal confirmed. Fast but risks consuming the bullet on a false positive.
+- **User-initiated** — fired by explicit HUD action. Slower but high-fidelity. A user who consciously reports a problem is a strong signal.
+
+**Server response:** bullet volume is the trigger. Because each bullet is single-use, arriving volume represents genuine events — not retry loops or jitter. Response is aggressive: throttle command pushed to all active clients via the existing HUD server channel.
+
+**Rearming:** post-incident, legitimate bullets are rearmed. Wolf-criers remain permanently spent. Signal quality improves over time.
+
 ### v3.6.11 — Targeted insertion observer (performance)
 - Replace processPage() full h3 scan on every mutation
 - Keep narrowed observer on ytd-two-column-browse-results-renderer
@@ -655,4 +673,5 @@ appear in the public build under any condition.
 | v3.7 as "Accordion nuke geometry" | Account-level scroll throttling confirmed — out of scope until fresh account |
 | Legacy fallback removal | Retained but logs [CRIT] — acceptable resilience, not deprecated |
 | Userscript auto-loader | Non-trivial and poorly understood. YouTube's CSP, Firefox's content script scheduling, and the document-start timing requirement make dynamic script loading via GM_xmlhttpRequest or fetch() unreliable. localStorage bridge pattern explored but unresolved. Deferred until extension migration makes it irrelevant. |
+
 
