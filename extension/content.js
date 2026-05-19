@@ -9,8 +9,8 @@
  *   DUPE     — channel duplicate suppression (one per channel per batch)
  *   WATCHED  — videos watched >90% (read from resume playback progress bar)
  *
- * Scope: homepage (/) and search (/results) only. Channel pages and watch
- * pages are explicitly out of scope — the user is already expressing intent.
+ * Scope: homepage (/) only. Search, channel pages, and watch pages are
+ * explicitly out of scope — the user is already expressing intent.
  *
  * Architecture:
  *   - MutationObserver narrowed to ytd-two-column-browse-results-renderer
@@ -151,6 +151,7 @@
         capsThreshold:  0.5,
         minTitleLength: 10,
         logLimit:       200,
+        nukeCeiling:    0.30,  // max fraction of evaluated cards that may be nuked per batch
         PHRASES_KEY:    "yt-purge-phrases",
         NUKE_LOG_KEY:   "yt-purge-nuke-log",  // last N nuked titles for anchor search
         NUKE_LOG_SIZE:  5,                     // number of nuked titles to retain
@@ -202,8 +203,7 @@
     }
 
     function filteringActive() {
-        const ctx = getPageContext();
-        return ctx === "home" || ctx === "search";
+        return getPageContext() === "home";
     }
 
     // ======================== HEURISTIC STATE ========================
@@ -830,51 +830,61 @@
 
     // ======================== WATCHED PERCENT ========================
     function getWatchedPercent(container) {
-        // Tier 1: known selector, light DOM
-        let progressBar = container.querySelector(
-            "ytd-thumbnail-overlay-resume-playback-renderer #progress"
-        );
-        if (progressBar) {
-            if (!progressBar.style.width) return null;
-            const pct = parseInt(progressBar.style.width, 10);
-            console.log(`[DIAG][WATCHED] light-DOM → ${pct}%`);
-            return isNaN(pct) ? null : pct;
-        }
-
-        // Tier 2: shadow DOM on the overlay renderer
-        const renderer = container.querySelector("ytd-thumbnail-overlay-resume-playback-renderer");
-        if (renderer) {
-            if (!renderer.shadowRoot) {
-                console.log("[DIAG][WATCHED] renderer present, no shadowRoot");
-            } else {
-                progressBar = renderer.shadowRoot.querySelector("#progress");
-                if (!progressBar) {
-                    console.log("[DIAG][WATCHED] shadow-DOM: renderer found, #progress absent");
-                } else if (!progressBar.style.width) {
-                    console.log("[DIAG][WATCHED] shadow-DOM: #progress found, width not set");
-                } else {
-                    const pct = parseInt(progressBar.style.width, 10);
-                    console.log(`[DIAG][WATCHED] shadow-DOM → ${pct}%`);
-                    return isNaN(pct) ? null : pct;
+        // Tier 1: lockup card format (current) — yt-thumbnail-overlay-progress-bar-view-model
+        // Progress bar is a div with class ytThumbnailOverlayProgressBarHostWatchedProgressBarSegment.
+        // Try light DOM first; if not found, pierce shadow roots — the lockup model renders
+        // its thumbnail area inside a shadow root, so the progress bar is not reachable via
+        // a plain querySelector from the card container.
+        const WATCHED_CLASS = ".ytThumbnailOverlayProgressBarHostWatchedProgressBarSegment";
+        let progressBar = container.querySelector(WATCHED_CLASS);
+        if (!progressBar) {
+            for (const el of container.querySelectorAll("*")) {
+                if (!el.shadowRoot) continue;
+                progressBar = el.shadowRoot.querySelector(WATCHED_CLASS);
+                if (progressBar) {
+                    console.log(`[DIAG][WATCHED] shadow pierced on <${el.tagName.toLowerCase()}>`);
+                    break;
                 }
             }
         }
+        if (progressBar?.style.width) {
+            const pct = parseInt(progressBar.style.width, 10);
+            console.log(`[DIAG][WATCHED] lockup → ${pct}%`);
+            return isNaN(pct) ? null : pct;
+        }
 
-        // Tier 3: structural fallback — search thumbnail subtree for any
-        // percentage-width element whose id or class contains "progress".
-        // Constrained to ytd-thumbnail to avoid false positives from text content.
-        const thumbnail = container.querySelector("ytd-thumbnail");
-        if (thumbnail) {
-            const candidates = thumbnail.querySelectorAll('[style*="width"]');
-            for (const el of candidates) {
-                const id  = el.id?.toLowerCase() || "";
-                const cls = typeof el.className === "string" ? el.className.toLowerCase() : "";
-                if (!id.includes("progress") && !cls.includes("progress")) continue;
-                const pct = parseInt(el.style.width, 10);
-                if (!isNaN(pct) && pct > 0) {
-                    console.log(`[DIAG][WATCHED] structural fallback → ${pct}% on #${el.id || "(no-id)"} .${el.className || "(no-class)"}`);
-                    return pct;
-                }
+        // Tier 2: legacy format — ytd-thumbnail-overlay-resume-playback-renderer
+        // Kept as fallback for non-lockup cards. Tries light DOM first, then shadow root.
+        progressBar = container.querySelector(
+            "ytd-thumbnail-overlay-resume-playback-renderer #progress"
+        );
+        if (progressBar?.style.width) {
+            const pct = parseInt(progressBar.style.width, 10);
+            console.log(`[DIAG][WATCHED] legacy light-DOM → ${pct}%`);
+            return isNaN(pct) ? null : pct;
+        }
+        const renderer = container.querySelector("ytd-thumbnail-overlay-resume-playback-renderer");
+        if (renderer?.shadowRoot) {
+            progressBar = renderer.shadowRoot.querySelector("#progress");
+            if (progressBar?.style.width) {
+                const pct = parseInt(progressBar.style.width, 10);
+                console.log(`[DIAG][WATCHED] legacy shadow-DOM → ${pct}%`);
+                return isNaN(pct) ? null : pct;
+            }
+        }
+
+        // Tier 3: structural fallback — search entire container for any element
+        // whose class contains "progress" and carries a percentage width style.
+        // Not constrained to ytd-thumbnail — the lockup format uses a different
+        // thumbnail host element (ytThumbnailBottomOverlayViewModelHost).
+        const candidates = container.querySelectorAll('[style*="width"]');
+        for (const el of candidates) {
+            const cls = typeof el.className === "string" ? el.className.toLowerCase() : "";
+            if (!cls.includes("progress")) continue;
+            const pct = parseInt(el.style.width, 10);
+            if (!isNaN(pct) && pct > 0) {
+                console.log(`[DIAG][WATCHED] structural fallback → ${pct}% on .${el.className}`);
+                return pct;
             }
         }
 
@@ -918,6 +928,10 @@
     }
 
     // ======================== NUKE HELPER ========================
+    // Removes the container from layout. Scroll velocity is managed by the
+    // per-batch nuke ceiling (CONFIG.nukeCeiling) — at most 30% of evaluated
+    // cards are nuked per batch, so 70% of cards remain visible and provide
+    // natural scroll friction. Telemetry is imperfect but substantially honest.
     function nuke(container, reason, label) {
         const isFirstNuke = !container.dataset.ytPurgeNuked;
         container.dataset.ytPurgeNuked = "1";
@@ -970,6 +984,19 @@
 
         MetricsService.recordScan();
 
+        let batchEvaluated = 0;
+        let batchNuked     = 0;
+
+        function attemptNuke(container, reason, label) {
+            if (batchEvaluated > 0 && batchNuked / batchEvaluated >= CONFIG.nukeCeiling) {
+                console.log(`[DIAG][CEILING] sparing [${reason}]: "${label.slice(0, 50)}"`);
+                return false;
+            }
+            nuke(container, reason, label);
+            batchNuked++;
+            return true;
+        }
+
         titles.forEach(h3 => {
             const title = h3.textContent?.trim();
             if (!title || title.length < 3) return;
@@ -984,10 +1011,11 @@
 
             if (container.dataset.ytPurgeProcessed === `${sessionId}:${title}`) {
                 if (!container.dataset.ytPurgeNuked) {
+                    batchEvaluated++;
                     if (heuristics.WATCHED.enabled) {
                         const percent = getWatchedPercent(container);
                         if (percent !== null && percent > 90) {
-                            nuke(container, "WATCHED", `[${percent}%] ${title}`);
+                            attemptNuke(container, "WATCHED", `[${percent}%] ${title}`);
                             return;
                         }
                     }
@@ -996,7 +1024,7 @@
                         if (channelName) {
                             container.dataset.ytPurgeDupeDone = "1";
                             if (seenChannels.has(channelName)) {
-                                nuke(container, "DUPE", `${channelName} — ${title}`);
+                                attemptNuke(container, "DUPE", `${channelName} — ${title}`);
                                 return;
                             }
                             seenChannels.add(channelName);
@@ -1019,6 +1047,7 @@
             MetricsService.recordCard();
             console.log(`[DIAG] container: <${container.tagName.toLowerCase()}> — "${title}"`);
 
+            batchEvaluated++;
             classifyTitle(title);
 
             if (heuristics.DUPE.enabled) {
@@ -1026,32 +1055,29 @@
                 if (channelName) {
                     container.dataset.ytPurgeDupeDone = "1";
                     if (seenChannels.has(channelName)) {
-                        nuke(container, "DUPE", `${channelName} — ${title}`);
-                        return;
+                        if (attemptNuke(container, "DUPE", `${channelName} — ${title}`)) return;
+                    } else {
+                        seenChannels.add(channelName);
                     }
-                    seenChannels.add(channelName);
                 }
             }
 
             if (heuristics.WATCHED.enabled) {
                 const percent = getWatchedPercent(container);
                 if (percent !== null && percent > 90) {
-                    nuke(container, "WATCHED", `[${percent}%] ${title}`);
-                    return;
+                    if (attemptNuke(container, "WATCHED", `[${percent}%] ${title}`)) return;
                 }
             }
 
             if (heuristics.PHRASE.enabled) {
                 if (CONFIG.clickbait.test(title) || matchesCustomPhrase(title)) {
-                    nuke(container, "PHRASE", title);
-                    return;
+                    if (attemptNuke(container, "PHRASE", title)) return;
                 }
             }
 
             if (heuristics.SLOP.enabled) {
                 if (CONFIG.grammarSlop.test(title)) {
-                    nuke(container, "SLOP", title);
-                    return;
+                    if (attemptNuke(container, "SLOP", title)) return;
                 }
             }
 
@@ -1060,12 +1086,16 @@
                 if (letters.length > CONFIG.minTitleLength) {
                     const upperCount = letters.replace(/[^A-Z]/g, "").length;
                     if (upperCount / letters.length >= CONFIG.capsThreshold) {
-                        nuke(container, "CAPS", title);
-                        return;
+                        if (attemptNuke(container, "CAPS", title)) return;
                     }
                 }
             }
         });
+
+        if (batchNuked > 0 || batchEvaluated > 0) {
+            const pct = batchEvaluated > 0 ? Math.round(batchNuked / batchEvaluated * 100) : 0;
+            console.log(`[DIAG] batch: ${batchEvaluated} evaluated, ${batchNuked} nuked (${pct}% — ceiling ${CONFIG.nukeCeiling * 100}%)`);
+        }
     }
 
     // ======================== THEMATIC INTELLIGENCE ========================

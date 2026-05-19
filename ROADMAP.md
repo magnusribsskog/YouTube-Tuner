@@ -5,9 +5,10 @@ The goal is to make the YouTube homepage useful for discovering good content,
 not to curate a perfect feed. We fight the algorithm's manipulation without
 trying to replace its function entirely.
 
-Filtering applies to **homepage and search only**. Channel pages and watch page
-sidebars are explicitly out of scope — the user is already expressing intent
-by being there.
+Filtering applies to the **homepage only**. Search, channel pages, and watch
+page sidebars are explicitly out of scope — the user is already expressing
+intent by being there. Search is an expression of intent no less than a channel
+page visit; the user knows what they are looking for.
 
 ---
 
@@ -215,15 +216,21 @@ waitForPrimaryTarget polling chain, SPA re-attachment on renderer change only.
 ### v3.9 extension build — Diagnostic session (2026-04-24)
 
 **Finding: WATCHED and DUPE selectors broken — YouTube DOM change**
-Both filters are silent across all legacy versions (3.7, 3.8, 3.9 Firefox)
-and the current Chrome extension build. Confirmed pre-existing: regression
-analysis shows the failure exists in legacy code before any extension work.
-Root cause: YouTube changed their DOM structure for the watched-video progress
-bar and/or channel name elements. Selectors hardcoded since v3.7.
+Both filters were silent across all legacy versions (3.7, 3.8, 3.9 Firefox)
+and the current Chrome extension build. Root cause: YouTube migrated homepage
+cards to `yt-lockup-view-model`, replacing internal element structure.
 
-Selectors to verify against live DOM tomorrow:
-- WATCHED: `ytd-thumbnail-overlay-resume-playback-renderer #progress`
-- DUPE: `ytd-channel-name #text`, `#channel-name #text`, `#channel-name`, etc.
+**DUPE — resolved.** Channel name moved to `yt-content-metadata-view-model a[href^="/@"]`.
+Selector added as primary in `CHANNEL_SELECTORS`. Confirmed present in DOM snapshot 2026-05-19.
+
+**WATCHED — resolved (2026-05-19).** `ytd-thumbnail-overlay-resume-playback-renderer`
+no longer present in lockup cards. Replaced by `yt-thumbnail-overlay-progress-bar-view-model`
+containing a div with class `ytThumbnailOverlayProgressBarHostWatchedProgressBarSegment`
+and inline `style="width: X%"`. Progress bar lives inside `yt-lockup-view-model`'s shadow
+root — not reachable via plain `querySelector` from the card container. `getWatchedPercent()`
+updated: Tier 1 tries light DOM then iterates shadow roots; legacy renderer retained as
+Tier 2; structural fallback (Tier 3) broadened from `ytd-thumbnail` subtree to full
+container search. Confirmed firing in field 2026-05-19.
 
 **Diagnostic infrastructure added (to be stripped or gated before publication):**
 - `watchForUnhide()` — MutationObserver on each nuked container watching
@@ -461,7 +468,26 @@ Standard telemetry is noisy by construction — heartbeats and polls produce fal
   force-evaluate with whatever title exists (prevents permanent hang)
 - Consider 50ms debounce when multiple containers added in rapid succession
 
-### v4.0 amendment — Lifecycle-respecting collapse (publication blocker)
+### v4.0 amendment — Homepage-only scope enforcement
+
+`filteringActive()` returns true for `ctx === "home"` only. Search removed
+from scope. The manifest `matches` field remains `https://www.youtube.com/*` —
+the extension must load on all YouTube pages to attach the SPA navigation
+listener and intercept fetch at document-start, but filtering does not activate
+outside the homepage.
+
+---
+
+### v4.0 amendment — Lifecycle-respecting collapse (publication blocker) — SHIPPED 2026-05-19
+
+**Field finding (2026-05-19):** 1px collapse confirmed working for telemetry.
+However, scroll velocity remains a problem under heavy filtering — 1px cards
+add negligible scroll space, so a heavily filtered page still empties fast and
+continuation requests arrive at scraper-like rates. `visibility: hidden` with
+natural card height was tested and rejected — the feed looks broken with blank
+gaps. The correct fix is a per-batch nuke ceiling (see below): limiting nukes
+per batch means enough visible cards always remain to provide normal scroll
+friction, making the 1px approach viable.
 
 The `nuke()` function currently calls:
 ```js
@@ -498,6 +524,38 @@ This naturally slows the rate at which a user reaches the continuation trigger
 on a heavily filtered page — the problem may resolve without explicit throttling.
 Observe in practice before adding artificial delays.
 
+**Field finding (2026-05-19):** 1px cards do not provide sufficient scroll friction
+under heavy filtering — see field finding above. Resolved by per-batch nuke ceiling
+(next item), not by increasing collapsed height.
+
+---
+
+### Per-batch nuke ceiling — SHIPPED 2026-05-19
+
+**Depends on:** nothing. Implement before resuming heavy use.
+
+Under aggressive filtering, continuation requests arrive at scraper-like rates
+because nuked cards add negligible scroll space. The fix is not a smarter collapse
+strategy — it is limiting how many cards can be nuked per MutationObserver batch.
+
+**Mechanism:** track nukes issued per batch (reset each time `processPage()` is
+called from the observer). When the ceiling is reached, remaining cards in that
+batch are evaluated but not nuked — they pass through as visible. The user sees
+a natural feed density. Scroll velocity is indistinguishable from unfiltered
+browsing. The ceiling does not prevent filtering altogether — it just spreads
+nukes across multiple batches as the user scrolls.
+
+**Ceiling value:** 30% — at most 30% of evaluated cards per batch may be nuked.
+Chosen as a conservative starting point; tune upward from MetricsService data
+as account behaviour normalises. If the SPA stays stable at 30%, increase
+incrementally to find the sweet spot. Configured via `CONFIG.nukeCeiling`.
+Surface in HUD filter panel for session-by-session adjustment (not yet implemented).
+
+**Interaction with DUPE:** DUPE currently tracks seen channels session-wide.
+A card that escapes the ceiling in batch N is still marked as a known channel —
+it will be nuked in batch N+1 if it appears again. The ceiling does not create
+a free-pass for channels; it creates a delay.
+
 ### v4.0 — Extension stabilisation (in progress)
 - Chrome extension prototype running: manifest, content script, storage layer ported
 - Remove dev tools (DOM capture 📸, diagnostic export ✱) from published build,
@@ -505,6 +563,64 @@ Observe in practice before adding artificial delays.
 - Version displayed in HUD from manifest — no hardcoded strings
 - Post-commit hook syncs extension/ to Windows filesystem automatically
 - Firefox support: web-ext build after Chrome is stable
+
+### Stream-grounded internal selector discovery
+
+**Depends on:** fetch interception infrastructure (below). Supersedes reference
+video beacon approach in the Vision section.
+
+The reference video beacon approach required automated navigation and was
+therefore master-build only. This approach is passive, public-build compatible,
+and requires no prior nuke history.
+
+**Principle:** YouTube's browse API response contains the semantic content of
+each video card — title, channel name, watched percentage — before it is
+rendered into the DOM. Intercepting this response gives us ground truth to
+locate those values in the DOM after hydration, independent of what YouTube
+named the elements.
+
+**Fetch interception:** `window.fetch` is overridden at `document-start` before
+any YouTube script runs. Responses to YouTube's internal API endpoints
+(`/youtubei/v1/browse`, `/youtubei/v1/next`) are cloned — YouTube receives the
+original unmodified; we parse the clone.
+
+```js
+const _fetch = window.fetch;
+window.fetch = async (...args) => {
+    const res = await _fetch(...args);
+    if (isBrowseRequest(args[0])) tapResponse(res.clone());
+    return res;
+};
+```
+
+**Ground truth map:** parsed API responses populate a session-level Map keyed
+by rendered title text: `titleToMeta.set(renderedTitle, { channelName, watchedPct })`.
+Not persisted — fresh per session. The JSON structure is navigated recursively
+looking for objects with video renderer fields (`videoId`, title text,
+owner/channel text, resume playback data) rather than hardcoding the full
+response path, which makes it resilient to API restructuring.
+
+**Selector discovery:** During `processPage()`, after a container is confirmed
+hydrated, the title is looked up in `titleToMeta`. If found, the expected
+channel name is known. The current `CHANNEL_SELECTORS` list is tried in order —
+if one returns text matching the expected value, it is confirmed good. If none
+match, descendant elements are walked to find one whose text content matches
+the expected channel name; the matched element's tag and relevant attributes
+become the new selector candidate. A candidate confirmed by ≥2 independent
+cards is committed to storage via the existing `commitCorrection()` mechanism.
+
+**What this covers:** DUPE (channel name) and WATCHED (resume playback
+percentage). Container tag renames remain covered by the existing anchor search
+and v3.9 self-healing — these are complementary, not competing.
+
+**What this does not cover:** Cards that do not appear in the API response
+(promoted or sponsored content rendered client-side without a browse API call).
+Those are already outside the filter's primary scope.
+
+**Build tier:** public build. No navigation, no impressions fired, no external
+calls. Fully passive.
+
+---
 
 ### v4.1 — Semantic heuristic pipeline [PAUSED]
 
@@ -631,6 +747,11 @@ Build tier: master build only. The automated search navigation fires impressions
 and shapes recommendation history without user intent — it is gated by design,
 not disabled. It may run fully automatically in the master build. It must not
 appear in the public build under any condition.
+
+**Superseded** by stream-grounded internal selector discovery (see Planned),
+which achieves the same result passively without navigation and is public-build
+compatible. Retained here as a fallback for cases where the API response is
+not parseable.
 
 ### LLM-assisted last-resort self-healing
 - Triggered when in-page self-healing (v3.9) fails completely: CRIT persists
