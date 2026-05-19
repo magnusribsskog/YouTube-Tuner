@@ -1,8 +1,8 @@
 # YouTube Tuner
 
-A Chrome extension that quietly hides low-quality video cards from YouTube's
-homepage and search results — without touching channel pages, watch pages, or
-anything you're already intentionally looking at.
+A Chrome extension that fights the YouTube algorithm on its own turf — hiding
+clickbait, slop, duplicates, and videos you've already watched, without touching
+anything you're there on purpose to see.
 
 **Status:** Working and in daily use. Not yet published to the Chrome Web Store.
 See [ROADMAP.md](ROADMAP.md) for what's blocking publication and what's next.
@@ -17,7 +17,7 @@ See [ROADMAP.md](ROADMAP.md) for what's blocking publication and what's next.
 | **Slop** | Missing apostrophes, repeated punctuation |
 | **Caps** | >50% uppercase ratio in title |
 | **Watched** | Videos you've already watched >90% |
-| **Duplicate** | More than one video per channel per scroll batch |
+| **Duplicate** | More than one video per channel per session |
 
 All filters are on by default and can be toggled per-session via the on-screen panel.
 
@@ -50,7 +50,7 @@ The extension is not yet on the Chrome Web Store. To run it:
 4. Click **Load unpacked** and select the `extension/` folder
 5. Open YouTube
 
-The HUD appears in the top-right corner of the homepage and search results.
+The HUD appears in the top-right corner of the homepage.
 
 ---
 
@@ -67,17 +67,22 @@ The HUD appears in the top-right corner of the homepage and search results.
 
 ## Self-healing
 
-YouTube periodically renames its custom element tags. When that happens,
-the extension detects the structural failure, searches the DOM for known
-video titles, identifies the new tag, and corrects its selector set — without
-a page reload. See [SELF-HEALING.md](SELF-HEALING.md) for the full design.
+YouTube periodically renames its elements. The extension handles two classes
+of breakage without a page reload:
+
+- **Container renames** — detects structural failure, searches the DOM for
+  known video titles as beacons, identifies the new tag, and commits a correction
+- **Internal selector drift** — when filters like Watched or Duplicate go silent,
+  shadow DOM piercing recovers the current element paths inside the card
+
+See [SELF-HEALING.md](SELF-HEALING.md) for the full design.
 
 ---
 
 ## Design principles
 
-Filtering applies to **homepage and search only**. Channel pages and watch
-pages are explicitly out of scope.
+Filtering applies to the **homepage only**. Search, channel pages, and watch
+pages are explicitly out of scope — if you're there, you already know what you want.
 
 The extension stores everything locally in `chrome.storage.local`. Nothing
 is transmitted anywhere. No analytics, no telemetry, no external services.
